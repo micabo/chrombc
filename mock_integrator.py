@@ -16,6 +16,9 @@ from scipy.special import erfc
 import matplotlib.pyplot as plt
 from netCDF4 import Dataset
 
+import tkinter
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+
 #-----------------------------------------------------------------------------
 # constants
 
@@ -60,6 +63,7 @@ def fit(x, y, start_time, stop_time, f, initial_guess):
 class ChromData:
     """Interface to chromatographic data stored as either
     an AIA/NETCDF-File or .dat/.txt file, where the data is given as x-y data.
+    An equal spacing in time is assumed
     """
 
     @staticmethod
@@ -96,12 +100,14 @@ class ChromData:
                          "stop_value": [float(x) for x in d.variables["baseline_stop_value"]]}
         self.y_unit = str(d.detector_unit)
         self.x_unit = str(d.retention_unit)
+        self.raw = False
         d.close()
 
 
     def _build_from_xy(self, path):
         self.x, self.y = np.loadtxt(path, unpack=True)
         self.dt = self.x[1] - self.x[0]
+        self.raw = True  # no additional information (baseline etc.) given
 
 
     def _write_xy(self, path):
@@ -291,18 +297,29 @@ if __name__ == "__main__":
 
     d = MBIntegrator(c)
     points = d.find_peaks()
-    params_gauss = fit(d.x, d.y, 1040, 1080, gaussian, [50, 1060, 5])
-    params_emg = fit(d.x, d.y, 1040, 1080, emg, [50, 1060, 5, 1])
-    fit_gauss = [gaussian(xi, *params_gauss) for xi in d.x]
-    fit_emg = [emg(xi, *params_emg) for xi in d.x]
 
-    plt.plot(d.x, d.y)
-    plt.plot(d.x, fit_gauss)
-    plt.plot(d.x, fit_emg)
-    ##plt.plot(d.x, d.dy, linewidth=0.5)
-    ##plt.plot(d.x, d.ddy, linewidth=0.5)
-    plt.plot(*points, 'rx')
-    plt.show()
+    root = tkinter.Tk()
+    fig = plt.Figure(figsize=(6,4), dpi=300)
+    ax = fig.add_subplot(111)
+    ax.plot(d.x, d.y)
+    canvas = FigureCanvasTkAgg(fig, master=root)
+    canvas.draw()
+    canvas.get_tk_widget().pack(side=tkinter.TOP, fill=tkinter.BOTH, expand=1)
+    tkinter.mainloop()
+# =============================================================================
+#     params_gauss = fit(d.x, d.y, 1040, 1080, gaussian, [50, 1060, 5])
+#     params_emg = fit(d.x, d.y, 1040, 1080, emg, [50, 1060, 5, 1])
+#     fit_gauss = [gaussian(xi, *params_gauss) for xi in d.x]
+#     fit_emg = [emg(xi, *params_emg) for xi in d.x]
+#
+#     plt.plot(d.x, d.y)
+#     plt.plot(d.x, fit_gauss)
+#     plt.plot(d.x, fit_emg)
+#     ##plt.plot(d.x, d.dy, linewidth=0.5)
+#     ##plt.plot(d.x, d.ddy, linewidth=0.5)
+#     plt.plot(*points, 'rx')
+#     plt.show()
+# =============================================================================
 
     #plt.ylabel(c.y_unit)
     #plt.xlabel(c.x_unit)
