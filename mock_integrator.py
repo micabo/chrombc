@@ -15,15 +15,24 @@ from scipy.optimize import curve_fit
 from scipy.special import erfc
 import matplotlib.pyplot as plt
 from netCDF4 import Dataset
+from collections import namedtuple
 
 import tkinter
-from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+from matplotlib.figure import Figure
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
+from matplotlib.backend_bases import key_press_handler
+
 
 #-----------------------------------------------------------------------------
 # constants
 
 SQRT_PI = np.sqrt(np.pi)
 SQRT_1_2 = np.sqrt(2)/2
+
+#-----------------------------------------------------------------------------
+# ...
+Point = namedtuple('Point', ['x', 'y'])
+Peak = namedtuple('Peak', ['start', 'apex', 'end'])
 
 #-----------------------------------------------------------------------------
 # global functions
@@ -55,7 +64,7 @@ def fit(x, y, start_time, stop_time, f, initial_guess):
     start_index = bisect(x, start_time)
     stop_index = bisect(x, stop_time)
     params = curve_fit(f, x[start_index:stop_index], y[start_index:stop_index], initial_guess)
-    return params[0]
+    return list(params[0])
 
 #-----------------------------------------------------------------------------
 # classes
@@ -114,7 +123,6 @@ class ChromData:
         np.savetxt(path, np.array((self.x, self.y)).T)
 
 
-
 class MBIntegrator:
 
     win_width = 21 # window_width for smoothing
@@ -159,6 +167,11 @@ class MBIntegrator:
                 }
         self.settings = {**default_values, **parameters}
 
+        self.peaks = []
+        self.fits = []
+        self.y_fit = None
+        self.baseline = None
+        self.y_bc = None
 
     def find_peaks(self):
         N_start = int((MBIntegrator.win_width + 1)/2)
@@ -166,59 +179,96 @@ class MBIntegrator:
         i = N_start
         inflection_1_found = False
         inflection_2_found = False
-        critical_points = []
+        self.peaks = []
         while i < N_end:
-            #print(i)
-            possible_peak = []
+            apex = start = end = False
             if self.dy[i]*self.dy[i-1] < 0 and self.ddy[i] < 0:
                 self.point_type[i-1] = self.point_types["apex"]
-                possible_peak.append([self.x[i-1], self.y[i-1]])
+                apex = Point(self.x[i-1], self.y[i-1])
                 j = i - 2
                 # go to the left and find peak start
                 while j > N_start:
-                    #print(j)
                     if self.ddy[j-1]*self.ddy[j] < 0: # found inflection
                         self.point_type[j-1] = self.point_types["inflection-1"]
                         inflection_1_found = True
                     if self.dy[j-1] < self.settings["threshold"] and inflection_1_found:
                         self.point_type[j] = self.point_types["peak-start"]
-                        possible_peak.append([self.x[j], self.y[j]])
+                        start = Point(self.x[j], self.y[j])
                         break
                     j -= 1
                 # go to the right and find peak end
                 k = i
                 while k < N_end:
-                    #print(k)
                     if self.ddy[k+1]*self.ddy[k] < 0: # found inflection
                         self.point_type[k+1] = self.point_types["inflection-2"]
                         inflection_2_found = True
                     if self.dy[k+1] > -self.settings["threshold"] and inflection_2_found:
                         self.point_type[k] = self.point_types["peak-end"]
-                        possible_peak.append([self.x[k], self.y[k]])
+                        end = Point(self.x[k], self.y[k])
                         break
                     k += 1
-                # now go and find the next peaks start, if close enough, merge end and start and use the next peak end for height determination
+                # TODO: now go and find the next peaks start, if close enough, merge end and start and use the next peak end for height determination
 
                 # reject peaks which are too small
-                if len(possible_peak) == 3:
-                    time_list = sorted(possible_peak, key=lambda x: x[0])
-                    height_list = sorted(possible_peak, key=lambda x: x[1])
-                    width = time_list[2][0] - time_list[0][0]
-                    height = height_list[2][1] - height_list[0][1]
+                if apex and start and end:
+                    width = end.x - start.x
+                    height = apex.y - (start.y + end.y)/2
                     if width > self.settings["min_width"] and height > self.settings["min_height"]:
-                        for point in possible_peak:
-                            critical_points.append(point)
+                        self.peaks.append(Peak(start, apex, end))
 
-                # TODO: when start and end have been found, continue searching for peaks after the end of the current peak
+                # when start and end have been found:
+                # continue searching for peaks after the end of the current
+                # peak (k + 1)
                 inflection_1_found = False
                 inflection_2_found = False
                 i = k + 1
             else:
                 i += 1
 
-        # last order of business - merge close lying end/start points of adjacent peaks
-        # now start with fitting peaks!
-        return list(zip(*critical_points))
+        # TODO: last order of business - merge close lying end/start points of adjacent peaks
+        return self.peaks
+
+    def create_baseline(self):
+        # create a crudely interpolated baseline
+        self.baseline = np.copy(self.y)
+        for p in self.peaks:
+           start = bisect(self.x, p.start.x)
+           end = bisect(self.x, p.end.x)
+           slope = (self.y[end] - self.y[start])/(self.x[end] - self.x[start])
+           i = start
+           while i <= end:
+               self.baseline[i] = self.y[start] + slope * (self.x[i] - self.x[start])
+               i += 1
+        self.baseline = pd.Series(self.baseline).rolling(
+            window=MBIntegrator.win_width, center=True).mean()
+        return self.baseline
+
+
+    def fit_peaks(self):
+        "fit peaks with gaussian"
+        self.y_bc = self.y - self.baseline
+        for peak in self.peaks:
+            height = peak.apex.y - (peak.start.y + peak.end.y)/2
+            width = peak.end.x - peak.start.x
+            try:
+                self.fits.append(
+                    fit(self.x, self.y_bc, peak.start.x - width/4,
+                        peak.end.x + width/4, gaussian,
+                        [height, peak.apex.x, width]))
+            except RuntimeError:
+                print("Could not fit peak at:", peak.apex.x)
+                self.fits.append(None)
+
+
+    def generate_y_fit(self):
+        self.y_fit = np.full_like(self.y, 0)
+        for fit_params in self.fits:
+            if fit_params == None:
+                break
+            self.y_fit += np.array([gaussian(xi, *fit_params) for xi in self.x])
+        return self.y_fit
+
+
 
     ## TODO:
     ## - Construct baseline from all peak-start to peak-end
@@ -297,15 +347,41 @@ if __name__ == "__main__":
 
     d = MBIntegrator(c)
     points = d.find_peaks()
+    baseline = d.create_baseline()
+    d.fit_peaks()
+    d.generate_y_fit()
 
+    # plotting
     root = tkinter.Tk()
-    fig = plt.Figure(figsize=(6,4), dpi=300)
+    root.wm_title("ChroMBC")
+    fig = Figure(figsize=(3,2), dpi=200)
     ax = fig.add_subplot(111)
-    ax.plot(d.x, d.y)
+    ax.plot(d.x, d.y, label="original")
+    ax.plot(d.x, d.y_bc, label="baseline corrected")
+    ax.plot(d.x, d.y_fit, label="fit")
+    ax.legend()
     canvas = FigureCanvasTkAgg(fig, master=root)
     canvas.draw()
     canvas.get_tk_widget().pack(side=tkinter.TOP, fill=tkinter.BOTH, expand=1)
+
+    toolbar = NavigationToolbar2Tk(canvas, root)
+    toolbar.update()
+    canvas.get_tk_widget().pack(side=tkinter.TOP, fill=tkinter.BOTH, expand=1)
+
+    canvas.mpl_connect("key_press_event", key_press_handler)
+
+
+    def _quit():
+        root.quit()     # stops mainloop
+        root.destroy()  # this is necessary on Windows to prevent
+                        # Fatal Python Error: PyEval_RestoreThread: NULL tstate
+
+    button = tkinter.Button(master=root, text="Quit", command=_quit)
+    button.pack(side=tkinter.BOTTOM)
+
     tkinter.mainloop()
+
+
 # =============================================================================
 #     params_gauss = fit(d.x, d.y, 1040, 1080, gaussian, [50, 1060, 5])
 #     params_emg = fit(d.x, d.y, 1040, 1080, emg, [50, 1060, 5, 1])
@@ -315,14 +391,5 @@ if __name__ == "__main__":
 #     plt.plot(d.x, d.y)
 #     plt.plot(d.x, fit_gauss)
 #     plt.plot(d.x, fit_emg)
-#     ##plt.plot(d.x, d.dy, linewidth=0.5)
-#     ##plt.plot(d.x, d.ddy, linewidth=0.5)
-#     plt.plot(*points, 'rx')
-#     plt.show()
 # =============================================================================
-
-    #plt.ylabel(c.y_unit)
-    #plt.xlabel(c.x_unit)
     ##plt.plot(c.x.take(indices), c.y.take(indices), 'gx')
-    ##plt.plot(*samples)
-    #plt.show()
