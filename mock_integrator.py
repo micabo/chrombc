@@ -282,7 +282,7 @@ class CSIntegrator:
 
 if __name__ == "__main__":
     ##c = ChromData("./_007_008-0301_DAD1A.cdf")
-    c = ChromData("./LC28872AI_SST2.cdf")
+    c = ChromData("./SST.txt")
     ##c_int = CSIntegrator(c, slope_sensitivity=0.5, peak_width=100)
     ##samples = c_int.run(True)
     ##indices = c_int.peak_start_indices
