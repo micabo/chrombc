@@ -6,14 +6,11 @@ All times in seconds.
 """
 
 import numpy as np
-from functools import partial
 import pandas as pd
 from bisect import bisect
-import scipy.signal as sig
-from scipy.integrate import trapz, simps, quad
+from scipy.integrate import trapz
 from scipy.optimize import curve_fit
 from scipy.special import erfc
-import matplotlib.pyplot as plt
 from netCDF4 import Dataset
 from collections import namedtuple
 
@@ -29,10 +26,13 @@ from matplotlib.backend_bases import key_press_handler
 SQRT_PI = np.sqrt(np.pi)
 SQRT_1_2 = np.sqrt(2)/2
 
+
 #-----------------------------------------------------------------------------
-# ...
+# named tuple datastructures
+
 Point = namedtuple('Point', ['x', 'y'])
 Peak = namedtuple('Peak', ['start', 'apex', 'end'])
+
 
 #-----------------------------------------------------------------------------
 # global functions
@@ -61,10 +61,17 @@ def emg(x, h, mu, sigma, tau):
 
 
 def fit(x, y, start_time, stop_time, f, initial_guess):
-    start_index = bisect(x, start_time)
-    stop_index = bisect(x, stop_time)
-    params = curve_fit(f, x[start_index:stop_index], y[start_index:stop_index], initial_guess)
+    start_i = bisect(x, start_time)
+    stop_i = bisect(x, stop_time)
+    params = curve_fit(f, x[start_i:stop_i], y[start_i:stop_i], initial_guess)
     return list(params[0])
+
+
+def integrate_peak(peak, x, y):
+    start_i = bisect(x, peak.start.x)
+    stop_i = bisect(x, peak.end.x)
+    return trapz(y[start_i:stop_i], x[start_i:stop_i])
+
 
 #-----------------------------------------------------------------------------
 # classes
@@ -88,6 +95,7 @@ class ChromData:
     @staticmethod
     def bytearray2string(x):
         return "".join([element.decode('ascii') for element in x])
+
 
     def __init__(self, path):
         if ".cdf" == path[-4:]:
@@ -137,10 +145,8 @@ class MBIntegrator:
             'inflection-2': 5,
             'peak-end': 6,
             'valley': 7,
-            'skim-start': 8,
-            'skim-end': 9,
-            'shoulder-start': 10,
-            'shoulder-end': 11
+            'peak-rise': 8,
+            'peak-fall': 9
             }
 
 
@@ -162,16 +168,17 @@ class MBIntegrator:
 
         default_values = {
                 "threshold": 0.1,
-                "min_width": 0.5,
-                "min_height": 0.05
+                "min_width": 1,
+                "min_height": 0.5
                 }
         self.settings = {**default_values, **parameters}
 
         self.peaks = []
-        self.fits = []
+        self.peak_fits = []
         self.y_fit = None
         self.baseline = None
         self.y_bc = None
+
 
     def find_peaks(self):
         N_start = int((MBIntegrator.win_width + 1)/2)
@@ -188,6 +195,7 @@ class MBIntegrator:
                 j = i - 2
                 # go to the left and find peak start
                 while j > N_start:
+                    self.point_type[j] = self.point_types["peak-rise"]
                     if self.ddy[j-1]*self.ddy[j] < 0: # found inflection
                         self.point_type[j-1] = self.point_types["inflection-1"]
                         inflection_1_found = True
@@ -199,6 +207,7 @@ class MBIntegrator:
                 # go to the right and find peak end
                 k = i
                 while k < N_end:
+                    self.point_type[k] = self.point_types["peak-fall"]
                     if self.ddy[k+1]*self.ddy[k] < 0: # found inflection
                         self.point_type[k+1] = self.point_types["inflection-2"]
                         inflection_2_found = True
@@ -228,8 +237,10 @@ class MBIntegrator:
         # TODO: last order of business - merge close lying end/start points of adjacent peaks
         return self.peaks
 
+
     def create_baseline(self):
         # create a crudely interpolated baseline
+        # peaks which were not detected are taken as baseline
         self.baseline = np.copy(self.y)
         for p in self.peaks:
            start = bisect(self.x, p.start.x)
@@ -246,51 +257,48 @@ class MBIntegrator:
 
     def fit_peaks(self):
         "fit peaks with gaussian"
+        self.create_baseline()
         self.y_bc = self.y - self.baseline
         for peak in self.peaks:
             height = peak.apex.y - (peak.start.y + peak.end.y)/2
             width = peak.end.x - peak.start.x
             try:
-                self.fits.append(
-                    fit(self.x, self.y_bc, peak.start.x - width/4,
-                        peak.end.x + width/4, gaussian,
+                self.peak_fits.append(
+                    fit(self.x, self.y_bc, peak.start.x - width*0.1,
+                        peak.end.x + width*0.1, gaussian,
                         [height, peak.apex.x, width]))
             except RuntimeError:
                 print("Could not fit peak at:", peak.apex.x)
-                self.fits.append(None)
+                self.peak_fits.append(None)
 
 
     def generate_y_fit(self):
         self.y_fit = np.full_like(self.y, 0)
-        for fit_params in self.fits:
+        for fit_params in self.peak_fits:
             if fit_params == None:
                 break
             self.y_fit += np.array([gaussian(xi, *fit_params) for xi in self.x])
         return self.y_fit
 
-
-
-    ## TODO:
-    ## - Construct baseline from all peak-start to peak-end
+    def plot_on(self, ax):
+        ax.plot(self.x, self.y, label="original")
+        ax.legend()
 
 
 class CSIntegrator:
     "Mock-up of the ChemStation Integrator."
-    sampling_ratio = 15
+    sampling_ratio = 15  # number of points per peak
 
 
     def __init__(self, cdata, **parameters):
-        self.peak_start_indices = []
         self.dt = cdata.dt
         self.x = np.array(cdata.x)
         self.y = np.array(cdata.y)
-
-        # get the first and second derivative with a rolling average smoothing
-        self.dy = pd.Series(np.gradient(self.y, self.dt)).rolling(window=20).mean()
-        self.ddy = pd.Series(np.gradient(self.dy, self.dt)).rolling(window=20).mean()
+        self.peaks = []
+        self.peak_table = []
 
         # define the default values for the initial events
-        self.events = {"slope_sensitivity": 1.0,
+        self.events = {"slope_sensitivity": 0.1,
                        "peak_width": 3,
                        "area_reject": 0.0,
                        "area%_reject": 0.0,
@@ -301,73 +309,118 @@ class CSIntegrator:
             self.events[key] = value
 
         # timed events are given as tuples (event_name, parameter) if no parameter is required it is set to None
-        self.timed_events = [
-            [200, ("peak_width", 15)],
-            [250, ("peak_width", 3)],
-            [270, ("peak_width", 15)],
-            [300, ("peak_width", 30)]]
+        self.timed_events = [[300, ("peak_width", 5)]]
         self.timed_events.sort(key=lambda x: x[0])
 
 
-    def run(self, return_sampled_data=False):
-        "Apply the integration algorithm. Returns the sampled data for inspection, analytical results are saved in the class instance."
+    def find_peaks(self):
+        """Apply the integration algorithm.
+        Returns the sampled data for inspection,
+        analytical results are saved in the class instance.
+        """
         # go through the data from left to right and sample the data according to peak_width
         i = 0
-        timed_event_index = 0
-        step = 0
-        samples = []
+        step = int(self.events["peak_width"]/CSIntegrator.sampling_ratio/self.dt) or 1
+        halfstep = int(step/2) or 1
+
+        in_peak = past_apex = past_inflection = False
+        start = apex = end = False
+        last_slope = -1
+
         while i + 2*step < len(self.x):
             # check if a timed event needs to be activated
-            while timed_event_index < len(self.timed_events) and \
-                  self.timed_events[timed_event_index][0] < self.x[int(i+step/2)]:
-                self.events[self.timed_events[timed_event_index][1][0]] = self.timed_events[timed_event_index][1][1]
-                timed_event_index += 1
+            for e in self.timed_events:
+                if e[0] < self.x[int(i+halfstep)]:
+                    self.events[e[1][0]] = e[1][1]
+
             # define the step size according to the current peak_width
             step = int(self.events["peak_width"]/CSIntegrator.sampling_ratio/self.dt) or 1
-            this_point = np.mean(self.y[i:i+step])
-            next_point = np.mean(self.y[i+step:i+2*step])
-            slope = (next_point - this_point)/(step*self.dt)
-            if return_sampled_data:
-                samples.append([self.x[int(i+step/2)], this_point])
-            if slope >= self.events["slope_sensitivity"]:
-                # at the moment this yields only possible peak starts, compare to the JS version for tricks etc.
-                self.peak_start_indices.append(int(i + step/2))
+            this_y = np.mean(self.y[i:i+step])
+            next_y = np.mean(self.y[i+step:i+2*step])
+            slope = (next_y - this_y)/(step*self.dt)
+
+            if in_peak:
+                if past_inflection: # detect end
+                    if slope > -self.events["slope_sensitivity"]:
+                        end = Point(self.x[i+halfstep], self.y[i+halfstep])
+                        self.peaks.append(Peak(start, apex, end))
+                        in_peak = past_apex = past_inflection = False
+                elif past_apex: # detect peak inflection after apex
+                    if last_slope < slope:
+                        past_inflection = True
+                else: # detect peak apex
+                    if slope <= 0:
+                        apex = Point(self.x[i+halfstep], self.y[i+halfstep])
+                        past_apex = True
+            else: # detect peak start
+                if slope >= self.events["slope_sensitivity"]:
+                    start = Point(self.x[i+halfstep], self.y[i+halfstep])
+                    in_peak = True
+
+            last_slope = slope
             i += step
-        return list(zip(*samples)) if return_sampled_data else None
+        self._build_peak_table()
+        return self.peaks
+
+
+    def _build_peak_table(self):
+        cumulative_area = 0
+        for peak in self.peaks:
+            peak_area = integrate_peak(peak, self.x, self.y)
+            cumulative_area += peak_area
+            self.peak_table.append(dict(RT = peak.apex.x, Area = peak_area))
+        for peak in self.peak_table:
+            peak['Area%'] = 100 * peak['Area'] / cumulative_area
+
+
+    def print_peak_table(self):
+        print("Peak Table")
+        for peak in self.peak_table:
+            print("RT: {RT:6.2}\tArea: {Area:6.3}\tArea%: {Area%:6.2}".format(**peak))
+
+    def plot_on(self, ax):
+        ax.plot(self.x, self.y)
+        for i, peak in enumerate(self.peaks):
+            ax.plot([peak.start.x, peak.end.x], [peak.start.y, peak.end.y],
+                    'k', linewidth = 0.5)
+            ax.text(peak.apex.x, peak.apex.y + 0.1,
+                    "{:.0f}\n{:4.2f}".format(peak.apex.x, self.peak_table[i]["Area%"]),
+                    rotation = 90, horizontalalignment='center')
+
 
 
 if __name__ == "__main__":
-    ##c = ChromData("./_007_008-0301_DAD1A.cdf")
-    c = ChromData("./SST.txt")
-    ##c_int = CSIntegrator(c, slope_sensitivity=0.5, peak_width=100)
-    ##samples = c_int.run(True)
-    ##indices = c_int.peak_start_indices
-    ##params = fit(c.x, c.y, 290, 315, gaussian_bl, [50, 303, 1, 0, 0])
-    ##fit_y = [gaussian_bl(xi, *params) for xi in c.x]
-
-    d = MBIntegrator(c)
-    points = d.find_peaks()
-    baseline = d.create_baseline()
-    d.fit_peaks()
-    d.generate_y_fit()
-
-    # plotting
+    # set up GUI for plotting
     root = tkinter.Tk()
     root.wm_title("ChroMBC")
     fig = Figure(figsize=(3,2), dpi=200)
     ax = fig.add_subplot(111)
-    ax.plot(d.x, d.y, label="original")
-    ax.plot(d.x, d.y_bc, label="baseline corrected")
-    ax.plot(d.x, d.y_fit, label="fit")
-    ax.legend()
+
+    # read data
+    c = ChromData("./SST.txt")
+
+    # chem station
+    int_cs = CSIntegrator(c, slope_sensitivity=0.05, peak_width=3)
+    int_cs.find_peaks()
+    int_cs.plot_on(ax)
+
+# =============================================================================
+#     # mb integrator (nice try)
+#     int_mb = MBIntegrator(c)
+#     int_mb.fit_peaks()
+#     int_mb.generate_y_fit()
+#     int_mb.plot_on(ax)
+# =============================================================================
+
+    # continue with GUI
     canvas = FigureCanvasTkAgg(fig, master=root)
     canvas.draw()
     canvas.get_tk_widget().pack(side=tkinter.TOP, fill=tkinter.BOTH, expand=1)
 
     toolbar = NavigationToolbar2Tk(canvas, root)
     toolbar.update()
-    canvas.get_tk_widget().pack(side=tkinter.TOP, fill=tkinter.BOTH, expand=1)
 
+    canvas.get_tk_widget().pack(side=tkinter.TOP, fill=tkinter.BOTH, expand=1)
     canvas.mpl_connect("key_press_event", key_press_handler)
 
 
@@ -380,16 +433,3 @@ if __name__ == "__main__":
     button.pack(side=tkinter.BOTTOM)
 
     tkinter.mainloop()
-
-
-# =============================================================================
-#     params_gauss = fit(d.x, d.y, 1040, 1080, gaussian, [50, 1060, 5])
-#     params_emg = fit(d.x, d.y, 1040, 1080, emg, [50, 1060, 5, 1])
-#     fit_gauss = [gaussian(xi, *params_gauss) for xi in d.x]
-#     fit_emg = [emg(xi, *params_emg) for xi in d.x]
-#
-#     plt.plot(d.x, d.y)
-#     plt.plot(d.x, fit_gauss)
-#     plt.plot(d.x, fit_emg)
-# =============================================================================
-    ##plt.plot(c.x.take(indices), c.y.take(indices), 'gx')
