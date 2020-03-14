@@ -15,7 +15,7 @@ from scipy.special import erfc
 from netCDF4 import Dataset
 from collections import namedtuple
 
-import tkinter
+import tkinter as tk
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
 from matplotlib.backend_bases import key_press_handler
@@ -381,68 +381,93 @@ class CSIntegrator:
 
     def plot_on(self, ax):
         ax.plot(self.x, self.y)
-        for i, peak in enumerate(self.peaks):
-            ax.plot([peak.start.x, peak.end.x], [peak.start.y, peak.end.y],
-                    'k', linewidth = 0.5)
-            ax.text(peak.apex.x, peak.apex.y + 0.1,
-                    "{:.0f}\n{:4.2f}".format(peak.apex.x, self.peak_table[i]["Area%"]),
-                    rotation = 90, horizontalalignment='center')
+# =============================================================================
+#         for i, peak in enumerate(self.peaks):
+#             ax.plot([peak.start.x, peak.end.x], [peak.start.y, peak.end.y],
+#                     'k', linewidth = 0.5)
+#             ax.text(peak.apex.x, peak.apex.y + 0.1,
+#                     "{:.0f}\n{:4.2f}".format(peak.apex.x, self.peak_table[i]["Area%"]),
+#                     rotation = 90, horizontalalignment='center')
+# =============================================================================
 
 
-class ChromGUI():
+class ChromGUI(tk.Tk):
 
 
-    def __init__(self, plotting_fn):
-        # set up GUI for plotting
-        self.root = tkinter.Tk()
-        self.root.wm_title("ChroMBC")
-        self.frame1 = tkinter.Frame(self.root)
+    def __init__(self, plotting_fn = lambda x: None):
+        tk.Tk.__init__(self)
+        self.wm_title("ChroMBC")
+        self.frame1 = tk.Frame(self)
+        self.frame2 = tk.Frame(self)
 
-        self.fig = Figure(figsize=(3,2), dpi=200)
+        self.fig = Figure(figsize=(6,4), dpi=200)
+        #self.fig = Figure()
         self.ax = self.fig.add_subplot(111)
 
         plotting_fn(self.ax)
 
-        # continue with GUI
         self.canvas = FigureCanvasTkAgg(self.fig, master=self.frame1)
         self.canvas.draw()
-        self.canvas.get_tk_widget().pack(side=tkinter.TOP, fill=tkinter.BOTH, expand=1)
+        self.canvas.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=1)
 
         self.toolbar = NavigationToolbar2Tk(self.canvas, self.frame1)
         self.toolbar.update()
 
-        self.canvas.get_tk_widget().pack(side=tkinter.TOP, fill=tkinter.BOTH, expand=1)
+        self.canvas.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=1)
         self.canvas.mpl_connect("key_press_event", key_press_handler)
-        self.canvas.mpl_connect("button_press_event", self.draw_blobb('go'))
-        self.canvas.mpl_connect("button_release_event", self.draw_blobb('ro'))
 
-        self.frame2 = tkinter.Frame(self.root)
-        self.button = tkinter.Button(master=self.frame2, text="Quit", command=self.quit)
-        self.button.pack(side=tkinter.RIGHT)
+        self.integral = [[],[]]
 
-        self.bn_int_tgl = tkinter.Button(master=self.frame2, text="Int Tgl", command=self.toggle_int)
-        self.bn_int_tgl.pack(side=tkinter.LEFT)
+        self.canvas.mpl_connect("button_press_event", self.draw_integral)
+        self.canvas.mpl_connect("button_release_event", self.draw_integral)
 
-        self.frame1.pack(side=tkinter.TOP)
-        self.frame2.pack(side=tkinter.BOTTOM)
+# =============================================================================
+#         self.canvas.mpl_connect("button_press_event", self.draw_blobb('go'))
+#         self.canvas.mpl_connect("button_release_event", self.draw_blobb('ro'))
+# =============================================================================
+
+        self.bn_int_tgl = tk.Button(master=self.frame2, text="Int Tgl", command=self.toggle_int)
+        self.bn_int_tgl.pack(side=tk.LEFT)
+
+        self.button = tk.Button(master=self.frame2, text="Quit", command=self._quit)
+        self.button.pack(side=tk.LEFT)
+
+        self.frame2.pack(side=tk.TOP)
+        self.frame1.pack(side=tk.BOTTOM, fill=tk.BOTH, expand=1)
 
         self.integrate = False
+        self.mainloop()
 
-        tkinter.mainloop()
 
 
-    def quit(self):
-        self.root.quit()     # stops mainloop
-        self.root.destroy()  # this is necessary on Windows to prevent
+    def _quit(self):
+        self.quit()     # stops mainloop
+        self.destroy()  # this is necessary on Windows to prevent
                         # Fatal Python Error: PyEval_RestoreThread: NULL tstate
 
 
+    def draw_integral(self, e):
+        if not self.integrate:
+            return
+        if len(self.integral[0]) == 0:
+            self.integral[0].append(e.xdata)
+            self.integral[1].append(e.ydata)
+        elif len(self.integral[0]) == 1:
+            self.integral[0].append(e.xdata)
+            self.integral[1].append(e.ydata)
+            self.ax.plot(self.integral[0], self.integral[1], 'k', linewidth=.5)
+            self.canvas.draw()
+        else:
+            self.integral = [[],[]]
+            self.draw_integral(e)
+
+
     def draw_blobb(self, style):
-        def _blobb(e):
+        def blobb(e):
             if self.integrate:
                 self.ax.plot(e.xdata, e.ydata, style)
                 self.canvas.draw()
-        return _blobb
+        return blobb
 
 
     def toggle_int(self):
@@ -454,4 +479,8 @@ if __name__ == "__main__":
     c = ChromData("./SST.txt")
     csint = CSIntegrator(c)
     csint.find_peaks()
+
+    # start GUI
+    #root = tk.Tk()
     ChromGUI(csint.plot_on)
+    #gui.mainloop()
