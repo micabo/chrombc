@@ -5,6 +5,7 @@ Write a mock-up of the ChemStation Integrator (as can be inferred from the manua
 All times in seconds.
 """
 
+import sys
 import numpy as np
 import pandas as pd
 from bisect import bisect
@@ -250,8 +251,6 @@ class MBIntegrator:
            while i <= end:
                self.baseline[i] = self.y[start] + slope * (self.x[i] - self.x[start])
                i += 1
-        self.baseline = pd.Series(self.baseline).rolling(
-            window=MBIntegrator.win_width, center=True).mean()
         return self.baseline
 
 
@@ -268,7 +267,7 @@ class MBIntegrator:
                         peak.end.x + width*0.1, gaussian,
                         [height, peak.apex.x, width]))
             except RuntimeError:
-                print("Could not fit peak at:", peak.apex.x)
+                print("Could not fit peak at:", peak.apex.x, file=sys.stderr)
                 self.peak_fits.append(None)
 
 
@@ -279,6 +278,7 @@ class MBIntegrator:
                 break
             self.y_fit += np.array([gaussian(xi, *fit_params) for xi in self.x])
         return self.y_fit
+
 
     def plot_on(self, ax):
         ax.plot(self.x, self.y, label="original")
@@ -378,6 +378,7 @@ class CSIntegrator:
         for peak in self.peak_table:
             print("RT: {RT:6.2}\tArea: {Area:6.3}\tArea%: {Area%:6.2}".format(**peak))
 
+
     def plot_on(self, ax):
         ax.plot(self.x, self.y)
         for i, peak in enumerate(self.peaks):
@@ -388,48 +389,63 @@ class CSIntegrator:
                     rotation = 90, horizontalalignment='center')
 
 
-
-if __name__ == "__main__":
-    # set up GUI for plotting
-    root = tkinter.Tk()
-    root.wm_title("ChroMBC")
-    fig = Figure(figsize=(3,2), dpi=200)
-    ax = fig.add_subplot(111)
-
-    # read data
-    c = ChromData("./SST.txt")
-
-    # chem station
-    int_cs = CSIntegrator(c, slope_sensitivity=0.05, peak_width=3)
-    int_cs.find_peaks()
-    int_cs.plot_on(ax)
-
-# =============================================================================
-#     # mb integrator (nice try)
-#     int_mb = MBIntegrator(c)
-#     int_mb.fit_peaks()
-#     int_mb.generate_y_fit()
-#     int_mb.plot_on(ax)
-# =============================================================================
-
-    # continue with GUI
-    canvas = FigureCanvasTkAgg(fig, master=root)
-    canvas.draw()
-    canvas.get_tk_widget().pack(side=tkinter.TOP, fill=tkinter.BOTH, expand=1)
-
-    toolbar = NavigationToolbar2Tk(canvas, root)
-    toolbar.update()
-
-    canvas.get_tk_widget().pack(side=tkinter.TOP, fill=tkinter.BOTH, expand=1)
-    canvas.mpl_connect("key_press_event", key_press_handler)
+class ChromGUI():
 
 
-    def _quit():
-        root.quit()     # stops mainloop
-        root.destroy()  # this is necessary on Windows to prevent
+    def __init__(self, plotting_fn):
+        # set up GUI for plotting
+        self.root = tkinter.Tk()
+        self.root.wm_title("ChroMBC")
+        self.fig = Figure(figsize=(3,2), dpi=200)
+        self.ax = self.fig.add_subplot(111)
+
+        plotting_fn(self.ax)
+
+        # continue with GUI
+        self.canvas = FigureCanvasTkAgg(self.fig, master=self.root)
+        self.canvas.draw()
+        self.canvas.get_tk_widget().pack(side=tkinter.TOP, fill=tkinter.BOTH, expand=1)
+
+        self.toolbar = NavigationToolbar2Tk(self.canvas, self.root)
+        self.toolbar.update()
+
+        self.canvas.get_tk_widget().pack(side=tkinter.TOP, fill=tkinter.BOTH, expand=1)
+        self.canvas.mpl_connect("key_press_event", key_press_handler)
+        self.canvas.mpl_connect("button_press_event", self.draw_blobb('go'))
+        self.canvas.mpl_connect("button_release_event", self.draw_blobb('ro'))
+
+        self.button = tkinter.Button(master=self.root, text="Quit", command=self.quit)
+        self.button.pack(side=tkinter.BOTTOM)
+
+        self.bn_int_tgl = tkinter.Button(master=self.root, text="Int Tgl", command=self.toggle_int)
+        self.bn_int_tgl.pack(side=tkinter.BOTTOM)
+
+        self.integrate = False
+
+        tkinter.mainloop()
+
+
+    def quit(self):
+        self.root.quit()     # stops mainloop
+        self.root.destroy()  # this is necessary on Windows to prevent
                         # Fatal Python Error: PyEval_RestoreThread: NULL tstate
 
-    button = tkinter.Button(master=root, text="Quit", command=_quit)
-    button.pack(side=tkinter.BOTTOM)
 
-    tkinter.mainloop()
+    def draw_blobb(self, style):
+        def _blobb(e):
+            if self.integrate:
+                self.ax.plot(e.xdata, e.ydata, style)
+                self.canvas.draw()
+        return _blobb
+
+
+    def toggle_int(self):
+        self.integrate = not self.integrate
+
+
+
+if __name__ == "__main__":
+    c = ChromData("./SST.txt")
+    csint = CSIntegrator(c)
+    csint.find_peaks()
+    ChromGUI(csint.plot_on)
