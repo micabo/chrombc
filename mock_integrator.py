@@ -396,17 +396,19 @@ class ChromGUI():
         # set up GUI for plotting
         self.root = tkinter.Tk()
         self.root.wm_title("ChroMBC")
+        self.frame1 = tkinter.Frame(self.root)
+
         self.fig = Figure(figsize=(3,2), dpi=200)
         self.ax = self.fig.add_subplot(111)
 
         plotting_fn(self.ax)
 
         # continue with GUI
-        self.canvas = FigureCanvasTkAgg(self.fig, master=self.root)
+        self.canvas = FigureCanvasTkAgg(self.fig, master=self.frame1)
         self.canvas.draw()
         self.canvas.get_tk_widget().pack(side=tkinter.TOP, fill=tkinter.BOTH, expand=1)
 
-        self.toolbar = NavigationToolbar2Tk(self.canvas, self.root)
+        self.toolbar = NavigationToolbar2Tk(self.canvas, self.frame1)
         self.toolbar.update()
 
         self.canvas.get_tk_widget().pack(side=tkinter.TOP, fill=tkinter.BOTH, expand=1)
@@ -414,11 +416,15 @@ class ChromGUI():
         self.canvas.mpl_connect("button_press_event", self.draw_blobb('go'))
         self.canvas.mpl_connect("button_release_event", self.draw_blobb('ro'))
 
-        self.button = tkinter.Button(master=self.root, text="Quit", command=self.quit)
-        self.button.pack(side=tkinter.BOTTOM)
+        self.frame2 = tkinter.Frame(self.root)
+        self.button = tkinter.Button(master=self.frame2, text="Quit", command=self.quit)
+        self.button.pack(side=tkinter.RIGHT)
 
-        self.bn_int_tgl = tkinter.Button(master=self.root, text="Int Tgl", command=self.toggle_int)
-        self.bn_int_tgl.pack(side=tkinter.BOTTOM)
+        self.bn_int_tgl = tkinter.Button(master=self.frame2, text="Int Tgl", command=self.toggle_int)
+        self.bn_int_tgl.pack(side=tkinter.LEFT)
+
+        self.frame1.pack(side=tkinter.TOP)
+        self.frame2.pack(side=tkinter.BOTTOM)
 
         self.integrate = False
 
