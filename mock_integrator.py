@@ -8,14 +8,19 @@ All times in seconds.
 import sys
 import numpy as np
 import pandas as pd
-from bisect import bisect
+from bisect import bisect_left
+
 from scipy.integrate import trapz
 from scipy.optimize import curve_fit
 from scipy.special import erfc
+
 from netCDF4 import Dataset
 from collections import namedtuple
 
 import tkinter as tk
+from tkinter import ttk
+import tkinter.filedialog as tkfile
+
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
 from matplotlib.backend_bases import key_press_handler
@@ -61,16 +66,18 @@ def emg(x, h, mu, sigma, tau):
             erfc((s_t - dx/sigma) * SQRT_1_2))
 
 
-def fit(x, y, start_time, stop_time, f, initial_guess):
-    start_i = bisect(x, start_time)
-    stop_i = bisect(x, stop_time)
+def fit(x, y, start, stop, f, initial_guess):
+    "Fit x-y data with a function f within the specified range (start/stop)"
+    start_i = bisect_left(x, start)
+    stop_i = bisect_left(x, stop)
     params = curve_fit(f, x[start_i:stop_i], y[start_i:stop_i], initial_guess)
     return list(params[0])
 
 
 def integrate_peak(peak, x, y):
-    start_i = bisect(x, peak.start.x)
-    stop_i = bisect(x, peak.end.x)
+    "Integrate a peak (given as named tuple -> need start/end)"
+    start_i = bisect_left(x, peak.start.x)
+    stop_i = bisect_left(x, peak.end.x)
     return trapz(y[start_i:stop_i], x[start_i:stop_i])
 
 
@@ -244,8 +251,8 @@ class MBIntegrator:
         # peaks which were not detected are taken as baseline
         self.baseline = np.copy(self.y)
         for p in self.peaks:
-           start = bisect(self.x, p.start.x)
-           end = bisect(self.x, p.end.x)
+           start = bisect_left(self.x, p.start.x)
+           end = bisect_left(self.x, p.end.x)
            slope = (self.y[end] - self.y[start])/(self.x[end] - self.x[start])
            i = start
            while i <= end:
@@ -391,14 +398,14 @@ class CSIntegrator:
 # =============================================================================
 
 
-class ChromGUI(tk.Tk):
+class ChromGUI(tk.Frame):
 
 
-    def __init__(self, plotting_fn = lambda x: None):
-        tk.Tk.__init__(self)
-        self.wm_title("ChroMBC")
-        self.frame1 = tk.Frame(self)
-        self.frame2 = tk.Frame(self)
+    def __init__(self, master = None, plotting_fn = lambda x: None):
+        tk.Frame.__init__(self, master)
+        self.master.wm_title("ChroMBC")
+        self.frm_plot = tk.Frame(self)
+        self.frm_btn = tk.Frame(self)
 
         self.fig = Figure(figsize=(6,4), dpi=200)
         #self.fig = Figure()
@@ -406,11 +413,10 @@ class ChromGUI(tk.Tk):
 
         plotting_fn(self.ax)
 
-        self.canvas = FigureCanvasTkAgg(self.fig, master=self.frame1)
+        self.canvas = FigureCanvasTkAgg(self.fig, master = self.frm_plot)
         self.canvas.draw()
-        self.canvas.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=1)
 
-        self.toolbar = NavigationToolbar2Tk(self.canvas, self.frame1)
+        self.toolbar = NavigationToolbar2Tk(self.canvas, self.frm_plot)
         self.toolbar.update()
 
         self.canvas.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=1)
@@ -426,23 +432,22 @@ class ChromGUI(tk.Tk):
 #         self.canvas.mpl_connect("button_release_event", self.draw_blobb('ro'))
 # =============================================================================
 
-        self.bn_int_tgl = tk.Button(master=self.frame2, text="Int Tgl", command=self.toggle_int)
-        self.bn_int_tgl.pack(side=tk.LEFT)
+        self.btn_int_tgl = tk.Button(master=self.frm_btn, text="Int Tgl", command=self.toggle_int)
+        self.btn_int_tgl.pack(side=tk.LEFT)
 
-        self.button = tk.Button(master=self.frame2, text="Quit", command=self._quit)
-        self.button.pack(side=tk.LEFT)
+        self.btn_quit = tk.Button(master = self.frm_btn, text="Quit", command = self._quit)
+        self.btn_quit.pack(side=tk.LEFT)
 
-        self.frame2.pack(side=tk.TOP)
-        self.frame1.pack(side=tk.BOTTOM, fill=tk.BOTH, expand=1)
+        self.frm_btn.pack(side=tk.TOP)
+        self.frm_plot.pack(side=tk.BOTTOM, fill=tk.BOTH, expand=1)
 
         self.integrate = False
-        self.mainloop()
 
 
 
     def _quit(self):
-        self.quit()     # stops mainloop
-        self.destroy()  # this is necessary on Windows to prevent
+        self.master.quit()     # stops mainloop
+        self.master.destroy()  # this is necessary on Windows to prevent
                         # Fatal Python Error: PyEval_RestoreThread: NULL tstate
 
 
@@ -475,12 +480,79 @@ class ChromGUI(tk.Tk):
 
 
 
+class ChromGUI2(tk.Frame):
+    # do not use matplotlib
+
+    def __init__(self, master = None, plotting_fn = lambda x: None):
+        tk.Frame.__init__(self, master)
+        self.master.wm_title("ChroMBC")
+
+        self.frm_plot = tk.Frame(self)
+        self.frm_btn = tk.Frame(self)
+
+        self.menubar = tk.Menu(master = self)
+        self.filemenu = tk.Menu(self.menubar)
+        self.filemenu.add_command(label="Load", command = self.load)
+        self.filemenu.add_command(label="Save As", command = self.saveas)
+        self.menubar.add_cascade(label="Data", menu = self.filemenu)
+        self.master.config(menu = self.menubar)
+
+        self.canvas = tk.Canvas(self.frm_plot, width=400, height=400, bg="white")
+        self.canvas.create_line(0, 0, 50, 50)
+        self.canvas.bind("<Button-1>", self.click)
+        self.canvas.bind("<Configure>", self.resize)
+        self.canvas.pack(fill=tk.BOTH, expand=1)
+
+        self.btn_int_tgl = ttk.Button(master=self.frm_btn, text="Int Tgl", command=self.toggle_int)
+        self.btn_int_tgl.pack(side=tk.LEFT)
+
+        self.btn_quit = ttk.Button(master=self.frm_btn, text="Quit", command=self._quit)
+        self.btn_quit.pack(side=tk.LEFT)
+
+        self.frm_btn.pack(side=tk.TOP)
+        self.frm_plot.pack(side=tk.BOTTOM, fill=tk.BOTH, expand=1)
+
+        self.integrate = False
+
+    def load(self):
+        self.file = tkfile.askopenfile()
+        if self.file:
+            print("opening: ", self.file)
+
+    def saveas(self):
+        # problem: does not save immediately
+        self.file = tkfile.asksaveasfile()
+        if self.file:
+            self.file.write("saved")
+
+
+    def click(self, event):
+        c = event.widget
+        x = c.canvasx(event.x)
+        y = c.canvasy(event.y)
+        self.canvas.create_line(0, 0, x, y)
+
+
+    def resize(self, event):
+        w = event.widget
+        print(w, event.width, event.height)
+
+
+    def _quit(self):
+        self.master.destroy()
+        self.master.quit()
+
+
+    def toggle_int(self):
+        self.integrate = not self.integrate
+
+
 if __name__ == "__main__":
     c = ChromData("./SST.txt")
     csint = CSIntegrator(c)
     csint.find_peaks()
 
     # start GUI
-    #root = tk.Tk()
-    ChromGUI(csint.plot_on)
-    #gui.mainloop()
+    root = tk.Tk()
+    ChromGUI(root, csint.plot_on).pack()
+    root.mainloop()
