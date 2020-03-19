@@ -3,7 +3,6 @@
 Helper Constants/Functions/Classes
 """
 
-import numpy as np
 from bisect import bisect_left
 
 from scipy.integrate import trapz
@@ -11,6 +10,9 @@ from scipy.optimize import curve_fit
 from scipy.special import erfc
 
 from collections import namedtuple
+from netCDF4 import Dataset
+
+import numpy as np
 
 #-----------------------------------------------------------------------------
 # constants
@@ -92,7 +94,7 @@ class ChromData:
 
 
     def __init__(self, path):
-        if ".cdf" == path[-4:]:
+        if path[-4:] == ".cdf":
             self._build_from_cdf(path)
         else:
             self._build_from_xy(path)

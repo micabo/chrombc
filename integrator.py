@@ -5,12 +5,12 @@ Write a mock-up of the ChemStation Integrator (as can be inferred from the manua
 All times in seconds.
 """
 
-from cutil import *
+from cutil import Point, Peak, gaussian, fit, integrate_peak
+from bisect import bisect_left
 
 import sys
 import numpy as np
 import pandas as pd
-from bisect import bisect_left
 
 
 class MBIntegrator:
@@ -19,17 +19,17 @@ class MBIntegrator:
 
     # point_types - a dictionary of possible point types
     point_types = {
-            'undefined': 0,
-            'baseline': 1,
-            'peak-start': 2,
-            'inflection-1': 3,
-            'apex': 4,
-            'inflection-2': 5,
-            'peak-end': 6,
-            'valley': 7,
-            'peak-rise': 8,
-            'peak-fall': 9
-            }
+        'undefined': 0,
+        'baseline': 1,
+        'peak-start': 2,
+        'inflection-1': 3,
+        'apex': 4,
+        'inflection-2': 5,
+        'peak-end': 6,
+        'valley': 7,
+        'peak-rise': 8,
+        'peak-fall': 9
+        }
 
 
     def __init__(self, cdata, **parameters):
@@ -49,10 +49,10 @@ class MBIntegrator:
         self.point_type = np.full_like(self.x, 0, dtype=np.int8)
 
         default_values = {
-                "threshold": 0.1,
-                "min_width": 1,
-                "min_height": 0.5
-                }
+            "threshold": 0.1,
+            "min_width": 1,
+            "min_height": 0.5
+            }
         self.settings = {**default_values, **parameters}
 
         self.peaks = []
@@ -125,13 +125,13 @@ class MBIntegrator:
         # peaks which were not detected are taken as baseline
         self.baseline = np.copy(self.y)
         for p in self.peaks:
-           start = bisect_left(self.x, p.start.x)
-           end = bisect_left(self.x, p.end.x)
-           slope = (self.y[end] - self.y[start])/(self.x[end] - self.x[start])
-           i = start
-           while i <= end:
-               self.baseline[i] = self.y[start] + slope * (self.x[i] - self.x[start])
-               i += 1
+            start = bisect_left(self.x, p.start.x)
+            end = bisect_left(self.x, p.end.x)
+            slope = (self.y[end] - self.y[start])/(self.x[end] - self.x[start])
+            i = start
+            while i <= end:
+                self.baseline[i] = self.y[start] + slope * (self.x[i] - self.x[start])
+                i += 1
         return self.baseline
 
 
@@ -249,7 +249,7 @@ class CSIntegrator:
         for peak in self.peaks:
             peak_area = integrate_peak(peak, self.x, self.y)
             cumulative_area += peak_area
-            self.peak_table.append(dict(RT = peak.apex.x, Area = peak_area))
+            self.peak_table.append(dict(RT=peak.apex.x, Area=peak_area))
         for peak in self.peak_table:
             peak['Area%'] = 100 * peak['Area'] / cumulative_area
 
@@ -262,11 +262,9 @@ class CSIntegrator:
 
     def plot_on(self, ax):
         ax.plot(self.x, self.y)
-# =============================================================================
-#         for i, peak in enumerate(self.peaks):
-#             ax.plot([peak.start.x, peak.end.x], [peak.start.y, peak.end.y],
-#                     'k', linewidth = 0.5)
-#             ax.text(peak.apex.x, peak.apex.y + 0.1,
-#                     "{:.0f}\n{:4.2f}".format(peak.apex.x, self.peak_table[i]["Area%"]),
-#                     rotation = 90, horizontalalignment='center')
-# =============================================================================
+        for i, peak in enumerate(self.peaks):
+            ax.plot([peak.start.x, peak.end.x], [peak.start.y, peak.end.y],
+                    'k', linewidth = 0.5)
+            ax.text(peak.apex.x, peak.apex.y + 0.1,
+                    "{:.0f}\n{:4.2f}".format(peak.apex.x, self.peak_table[i]["Area%"]),
+                    rotation = 90, horizontalalignment='center')
