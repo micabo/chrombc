@@ -103,6 +103,10 @@ class ChromData:
         self.peak_table = []
 
 
+    def __len__(self):
+        return len(self.x)
+
+
     def add_peak(self, peak):
         self.peaks.append(peak)
 
@@ -128,7 +132,7 @@ class ChromData:
         d = Dataset(path, "r", format="NETCDF3_CLASSIC")
         self.y = np.array(d.variables["ordinate_values"])
         self.dt = float(d.variables["actual_sampling_interval"].getValue())
-        self.x = np.fromiter(ChromData.construct_time(len(self.y), self.dt), np.float32)
+        self.x = np.fromiter(ChromData.construct_time(len(self.y), self.dt), np.float64)
         self.peak_names = [ChromData.bytearray2string(name.data) for name in d.variables["peak_name"]]
         self.peak_rts = [float(rt) for rt in d.variables["peak_retention_time"]]
         self.baseline = {"start_time": [float(x) for x in d.variables["baseline_start_time"]],

@@ -5,7 +5,7 @@ GUI
 """
 
 from cutil import ChromData
-from integrator import CSIntegrator, CSIntegrator
+from integrator import CSIntegrator, MBIntegrator
 
 import tkinter as tk
 from tkinter import ttk
@@ -24,8 +24,10 @@ class RibbonFrame(ttk.Frame):
 
         #self.ent_1_str = tk.StringVar()
 
-        self.btn_1 = ttk.Button(master=self, text="Toggle Integration", command=master._toggle_int)
-        self.btn_2 = ttk.Button(master=self, text="Run Integration", command=self.master.run_integration)
+        self.btn_1 = ttk.Button(master=self, text="Toggle Integration",
+                                command=master._toggle_int)
+        self.btn_2 = ttk.Button(master=self, text="Run Integration",
+                                command=self.master.run_integration)
         self.btn_3 = ttk.Button(master=self, text="Quit", command=master._quit)
         #self.ent_1 = tk.Entry(master=self, textvariable=self.ent_1_str)
 
@@ -61,6 +63,7 @@ class PlotFrame(ttk.Frame):
     "Handles the display of data and interactive integration"
     def __init__(self, master=None, use_mpl=False):
         ttk.Frame.__init__(self, master)
+
         if use_mpl:
             self._build_matplotlib()
         else:
@@ -81,23 +84,44 @@ class PlotFrame(ttk.Frame):
         self.fig = Figure(figsize=(5,3), dpi=200)
         self.ax = self.fig.add_subplot(111)
         self.canvas = FigureCanvasTkAgg(self.fig, master=self)
+        self.tk_canvas = self.canvas.get_tk_widget()
         self.toolbar = NavigationToolbar2Tk(self.canvas, self)
         self.toolbar.update()
+
+        self.tk_canvas = self.canvas.get_tk_widget()
 
         self.canvas.mpl_connect("key_press_event", key_press_handler)
         self.canvas.mpl_connect("button_press_event", self.draw_integral)
         self.canvas.mpl_connect("button_release_event", self.draw_integral)
-
+# =============================================================================
+#         self.tk_canvas.bind("<Configure>", self._resize)
+#         self.tk_canvas.bind("<Button-1>", self._click)
+# =============================================================================
         self.canvas.draw()
-        self.canvas.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=1)
+        self.tk_canvas.pack(side=tk.TOP, fill=tk.BOTH, expand=1)
 
 
     def _click(self, event):
         c = event.widget
         x = c.canvasx(event.x)
         y = c.canvasy(event.y)
-        self.canvas.create_line(0, 0, x, y)
+        c.create_line(0, 0, x, y)
 
+
+    def draw_integral(self, e):
+        if not self.master.integrate:
+            return
+        if len(self.integral[0]) == 0:
+            self.integral[0].append(e.xdata)
+            self.integral[1].append(e.ydata)
+        elif len(self.integral[0]) == 1:
+            self.integral[0].append(e.xdata)
+            self.integral[1].append(e.ydata)
+            self.ax.plot(self.integral[0], self.integral[1], 'k', linewidth=.5)
+            self.canvas.draw()
+        else:
+            self.integral = [[],[]]
+            self.draw_integral(e)
 
     def _resize(self, event):
         w = event.widget
@@ -119,22 +143,6 @@ class PlotFrame(ttk.Frame):
         self.canvas.draw()
 
 
-    def draw_integral(self, e):
-        if not self.master.integrate:
-            return
-        if len(self.integral[0]) == 0:
-            self.integral[0].append(e.xdata)
-            self.integral[1].append(e.ydata)
-        elif len(self.integral[0]) == 1:
-            self.integral[0].append(e.xdata)
-            self.integral[1].append(e.ydata)
-            self.ax.plot(self.integral[0], self.integral[1], 'k', linewidth=.5)
-            self.canvas.draw()
-        else:
-            self.integral = [[],[]]
-            self.draw_integral(e)
-
-
 
 class TestGUI(ttk.Frame):
     "Main Application"
@@ -143,7 +151,7 @@ class TestGUI(ttk.Frame):
 
         #self.datafiles = tk.StringVar(value=["file {}".format(i) for i in range(100)])
         self.datafiles = tk.StringVar(value=[])
-        self.data = CSIntegrator()
+        self.data = MBIntegrator()
         self.current_data = None
 
         self._setup_menubar()
@@ -158,10 +166,10 @@ class TestGUI(ttk.Frame):
     def set_current_data(self, event):
         # get index of currently selected data
         self.current_data = event.widget.curselection()[0]
-        self.plotdisplay.plot_curve(self.data.cdata[self.current_data])
-        if self.data.cdata[self.current_data].peaks:
+        self.plotdisplay.plot_curve(self.data[self.current_data])
+        if self.data[self.current_data].peaks:
             self.plotdisplay.plot_peaks(
-                self.data.cdata[self.current_data].peaks)
+                self.data[self.current_data].peaks)
 
 
     def _setup_menubar(self):
@@ -187,9 +195,9 @@ class TestGUI(ttk.Frame):
     def _load(self):
         file = tkfile.askopenfile()
         if file:
-            self.current_data = len(self.data.cdata)
+            self.current_data = len(self.data)
             self.data.add_chromatogramm(ChromData(file.name))
-            self.plotdisplay.plot_curve(self.data.cdata[self.current_data])
+            self.plotdisplay.plot_curve(self.data[self.current_data])
             self.sidepane.add_entry(self.current_data, file.name.split("/")[-1])
 
 
@@ -210,7 +218,8 @@ class TestGUI(ttk.Frame):
 
     def run_integration(self):
         self.data.find_peaks(self.current_data)
-        self.plotdisplay.plot_peaks(self.data.cdata[self.current_data].peaks)
+        self.plotdisplay.plot_peaks(self.data[self.current_data].peaks)
+
 
 
 if __name__ == "__main__":

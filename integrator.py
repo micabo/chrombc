@@ -5,7 +5,7 @@ Write a mock-up of the ChemStation Integrator (as can be inferred from the manua
 All times in seconds.
 """
 
-from cutil import ChromData, Point, Peak, gaussian, fit, integrate_peak
+from cutil import ChromData, Point, Peak, gaussian, fit
 from bisect import bisect_left
 
 import sys
@@ -34,6 +34,14 @@ class CSIntegrator:
         # timed events are given as tuples (event_name, parameter) if no parameter is required it is set to None
         self.timed_events = [[300, ("peak_width", 5)]]
         self.timed_events.sort(key=lambda x: x[0])
+
+
+    def __getitem__(self, index):
+        return self.cdata[index]
+
+
+    def __len__(self):
+        return len(self.cdata)
 
 
     def add_chromatogramm(self, data):
@@ -104,12 +112,12 @@ class CSIntegrator:
         return self.cdata[index].peaks
 
 
-# TODO - integrator should operate on more than one chromatogram!
+
 class MBIntegrator:
 
     win_width = 21 # window_width for smoothing
 
-    # point_types - a dictionary of possible point types
+    # self.point_types - a dictionary of possible point types
     point_types = {
         'undefined': 0,
         'baseline': 1,
@@ -124,21 +132,8 @@ class MBIntegrator:
         }
 
 
-    def __init__(self, cdata, **parameters):
-        self.dt = cdata.dt
-        self.x = np.array(cdata.x)
-        self.y = np.array(cdata.y)
-        self.N = len(self.x)
-
-        # get the first and second derivative with a rolling average smoothing
-        self.dy = pd.Series(np.gradient(self.y, self.dt)).rolling(
-            window=MBIntegrator.win_width, center=True).mean()
-        self.ddy = pd.Series(np.gradient(self.dy, self.dt)).rolling(
-            window=MBIntegrator.win_width, center=True).mean()
-
-        # point_type: an array containing a number for each point
-        # this number defines the type of the point
-        self.point_type = np.full_like(self.x, 0, dtype=np.int8)
+    def __init__(self, **parameters):
+        self.cdata = []
 
         default_values = {
             "threshold": 0.1,
@@ -147,47 +142,75 @@ class MBIntegrator:
             }
         self.settings = {**default_values, **parameters}
 
-        self.peaks = []
-        self.peak_fits = []
-        self.y_fit = None
-        self.baseline = None
-        self.y_bc = None
+
+    def __getitem__(self, index):
+        return self.cdata[index]
 
 
-    def find_peaks(self):
-        N_start = int((MBIntegrator.win_width + 1)/2)
-        N_end = self.N - N_start
-        i = N_start
+    def __len__(self):
+        return len(self.cdata)
+
+
+    def add_chromatogramm(self, data):
+        if isinstance(data, ChromData):
+            self.cdata.append(data)
+        elif isinstance(data, list) and len(data) > 0:
+            self.add_chromatogramm(data[0])
+            self.add_chromatogramm(data[1:])
+        else:
+            pass #TODO: should signal an error
+
+
+    def find_peaks(self, index):
+        assert index < len(self.cdata)
+        x = self.cdata[index].x
+        y = self.cdata[index].y
+        dt = self.cdata[index].dt
+
+        # get the first and second derivative with a rolling average smoothing
+        dy = pd.Series(np.gradient(y, dt)).rolling(
+            window=MBIntegrator.win_width, center=True).mean()
+        ddy = pd.Series(np.gradient(dy, dt)).rolling(
+            window=MBIntegrator.win_width, center=True).mean()
+
+        point_type = np.full_like(x, 0, dtype=np.int8)
+
+
+        N = len(self.cdata[index])
+        N_start = int((MBIntegrator.win_width + 1)/2) or 1
+        N_end = N - N_start
+
         inflection_1_found = False
         inflection_2_found = False
-        self.peaks = []
+
+        i = N_start
         while i < N_end:
             apex = start = end = False
-            if self.dy[i]*self.dy[i-1] < 0 and self.ddy[i] < 0:
-                self.point_type[i-1] = self.point_types["apex"]
-                apex = Point(self.x[i-1], self.y[i-1])
+            if dy[i]*dy[i-1] < 0 and ddy[i] < 0:
+                point_type[i-1] = self.point_types["apex"]
+                apex = Point(x[i-1], y[i-1])
                 j = i - 2
                 # go to the left and find peak start
                 while j > N_start:
-                    self.point_type[j] = self.point_types["peak-rise"]
-                    if self.ddy[j-1]*self.ddy[j] < 0: # found inflection
-                        self.point_type[j-1] = self.point_types["inflection-1"]
+                    point_type[j] = self.point_types["peak-rise"]
+                    if ddy[j-1]*ddy[j] < 0: # found inflection
+                        point_type[j-1] = self.point_types["inflection-1"]
                         inflection_1_found = True
-                    if self.dy[j-1] < self.settings["threshold"] and inflection_1_found:
-                        self.point_type[j] = self.point_types["peak-start"]
-                        start = Point(self.x[j], self.y[j])
+                    if dy[j-1] < self.settings["threshold"] and inflection_1_found:
+                        point_type[j] = self.point_types["peak-start"]
+                        start = Point(x[j], y[j])
                         break
                     j -= 1
                 # go to the right and find peak end
                 k = i
                 while k < N_end:
-                    self.point_type[k] = self.point_types["peak-fall"]
-                    if self.ddy[k+1]*self.ddy[k] < 0: # found inflection
-                        self.point_type[k+1] = self.point_types["inflection-2"]
+                    point_type[k] = self.point_types["peak-fall"]
+                    if ddy[k+1]*ddy[k] < 0: # found inflection
+                        point_type[k+1] = self.point_types["inflection-2"]
                         inflection_2_found = True
-                    if self.dy[k+1] > -self.settings["threshold"] and inflection_2_found:
-                        self.point_type[k] = self.point_types["peak-end"]
-                        end = Point(self.x[k], self.y[k])
+                    if dy[k+1] > -self.settings["threshold"] and inflection_2_found:
+                        point_type[k] = self.point_types["peak-end"]
+                        end = Point(x[k], y[k])
                         break
                     k += 1
                 # TODO: now go and find the next peaks start, if close enough, merge end and start and use the next peak end for height determination
@@ -197,7 +220,7 @@ class MBIntegrator:
                     width = end.x - start.x
                     height = apex.y - (start.y + end.y)/2
                     if width > self.settings["min_width"] and height > self.settings["min_height"]:
-                        self.peaks.append(Peak(start, apex, end))
+                        self.cdata[index].add_peak(Peak(start, apex, end))
 
                 # when start and end have been found:
                 # continue searching for peaks after the end of the current
@@ -205,50 +228,53 @@ class MBIntegrator:
                 inflection_1_found = False
                 inflection_2_found = False
                 i = k + 1
-            else:
-                i += 1
+
+            i += 1
 
         # TODO: last order of business - merge close lying end/start points of adjacent peaks
-        return self.peaks
+        return self.cdata[index].peaks
 
 
-    def create_baseline(self):
-        # create a crudely interpolated baseline
-        # peaks which were not detected are taken as baseline
-        self.baseline = np.copy(self.y)
-        for p in self.peaks:
-            start = bisect_left(self.x, p.start.x)
-            end = bisect_left(self.x, p.end.x)
-            slope = (self.y[end] - self.y[start])/(self.x[end] - self.x[start])
-            i = start
-            while i <= end:
-                self.baseline[i] = self.y[start] + slope * (self.x[i] - self.x[start])
-                i += 1
-        return self.baseline
-
-
-    def fit_peaks(self):
-        "fit peaks with gaussian"
-        self.create_baseline()
-        self.y_bc = self.y - self.baseline
-        for peak in self.peaks:
-            height = peak.apex.y - (peak.start.y + peak.end.y)/2
-            width = peak.end.x - peak.start.x
-            try:
-                self.peak_fits.append(
-                    fit(self.x, self.y_bc, peak.start.x - width*0.1,
-                        peak.end.x + width*0.1, gaussian,
-                        [height, peak.apex.x, width]))
-            except RuntimeError:
-                print("Could not fit peak at:", peak.apex.x, file=sys.stderr)
-                self.peak_fits.append(None)
-
-
-    def generate_y_fit(self):
-        self.y_fit = np.full_like(self.y, 0)
-        for fit_params in self.peak_fits:
-            if fit_params == None:
-                break
-            self.y_fit += np.array([gaussian(xi, *fit_params) for xi in self.x])
-        return self.y_fit
+# =============================================================================
+## NOT GENERALIZED TO MULITPLE CHROMATOGRAMS!
+#     def create_baseline(self):
+#         # create a crudely interpolated baseline
+#         # peaks which were not detected are taken as baseline
+#         self.baseline = np.copy(self.y)
+#         for p in self.peaks:
+#             start = bisect_left(self.x, p.start.x)
+#             end = bisect_left(self.x, p.end.x)
+#             slope = (self.y[end] - self.y[start])/(self.x[end] - self.x[start])
+#             i = start
+#             while i <= end:
+#                 self.baseline[i] = self.y[start] + slope * (self.x[i] - self.x[start])
+#                 i += 1
+#         return self.baseline
+#
+#
+#     def fit_peaks(self):
+#         "fit peaks with gaussian"
+#         self.create_baseline()
+#         self.y_bc = self.y - self.baseline
+#         for peak in self.peaks:
+#             height = peak.apex.y - (peak.start.y + peak.end.y)/2
+#             width = peak.end.x - peak.start.x
+#             try:
+#                 self.peak_fits.append(
+#                     fit(self.x, self.y_bc, peak.start.x - width*0.1,
+#                         peak.end.x + width*0.1, gaussian,
+#                         [height, peak.apex.x, width]))
+#             except RuntimeError:
+#                 print("Could not fit peak at:", peak.apex.x, file=sys.stderr)
+#                 self.peak_fits.append(None)
+#
+#
+#     def generate_y_fit(self):
+#         self.y_fit = np.full_like(self.y, 0)
+#         for fit_params in self.peak_fits:
+#             if fit_params == None:
+#                 break
+#             self.y_fit += np.array([gaussian(xi, *fit_params) for xi in self.x])
+#         return self.y_fit
+# =============================================================================
 
