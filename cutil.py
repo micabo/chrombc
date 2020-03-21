@@ -13,6 +13,7 @@ from collections import namedtuple
 from netCDF4 import Dataset
 
 import numpy as np
+import pandas as pd
 
 #-----------------------------------------------------------------------------
 # constants
@@ -107,25 +108,8 @@ class ChromData:
         return len(self.x)
 
 
-    def add_peak(self, peak):
-        self.peaks.append(peak)
-
-
-    def build_peak_table(self):
-        cumulative_area = 0
-        for peak in self.peaks:
-            peak_area = integrate_peak(peak, self.x, self.y)
-            cumulative_area += peak_area
-            self.peak_table.append(dict(RT=peak.apex.x, Area=peak_area))
-        for peak in self.peak_table:
-            peak['Area%'] = 100 * peak['Area'] / cumulative_area
-
-
-    def print_peak_table(self):
-        table = []
-        for peak in self.peak_table:
-            table.append("RT: {RT:6.2}\tArea: {Area:6.3}\tArea%: {Area%:6.2}".format(**peak))
-        return table
+    def __iter__(self):
+        return iter((self.x, self.y))
 
 
     def _build_from_cdf(self, path):
@@ -153,3 +137,36 @@ class ChromData:
 
     def _write_xy(self, path):
         np.savetxt(path, np.array((self.x, self.y)).T)
+
+
+    def add_peak(self, peak):
+        self.peaks.append(peak)
+
+
+    def smooth(self, width):
+        self.y = pd.Series(self.y).rolling(window=width, center=True).mean()
+        self.peaks = []
+        self.peak_table = []
+        return self.y
+
+
+    def build_peak_table(self):
+        cumulative_area = 0
+        for peak in self.peaks:
+            peak_area = integrate_peak(peak, self.x, self.y)
+            cumulative_area += peak_area
+            self.peak_table.append(dict(RT=peak.apex.x, Area=peak_area))
+        for peak in self.peak_table:
+            peak['Area%'] = 100 * peak['Area'] / cumulative_area
+
+
+    def print_peak_table(self):
+        table = []
+        for peak in self.peak_table:
+            table.append("RT: {RT:6.2}\tArea: {Area:6.3}\tArea%: {Area%:6.2}".format(**peak))
+        return table
+
+
+if __name__ == "__main__":
+    c = ChromData("./data/SST.txt")
+    x, y = c

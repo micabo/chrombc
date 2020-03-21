@@ -13,7 +13,37 @@ import numpy as np
 import pandas as pd
 
 
-class CSIntegrator:
+class Integrator:
+    """The typical interface of an integrator"""
+    def __init__(self):
+        pass
+
+
+    def __getitem__(self, index):
+        return self.cdata[index]
+
+
+    def __len__(self):
+        return len(self.cdata)
+
+
+    def add_chromatogramm(self, data):
+        if isinstance(data, ChromData):
+            self.cdata.append(data)
+        elif isinstance(data, list) and len(data) > 0:
+            self.add_chromatogramm(data[0])
+            self.add_chromatogramm(data[1:])
+        else:
+            raise TypeError("Function expects argument of type ChromData "
+                            "or a list of ChromData")
+
+
+    def find_peaks(self, index):
+        pass
+
+
+
+class CSIntegrator(Integrator):
     "Mock-up of the ChemStation Integrator."
     sampling_ratio = 15  # number of points per peak
 
@@ -36,32 +66,13 @@ class CSIntegrator:
         self.timed_events.sort(key=lambda x: x[0])
 
 
-    def __getitem__(self, index):
-        return self.cdata[index]
-
-
-    def __len__(self):
-        return len(self.cdata)
-
-
-    def add_chromatogramm(self, data):
-        if isinstance(data, ChromData):
-            self.cdata.append(data)
-        elif isinstance(data, list) and len(data) > 0:
-            self.add_chromatogramm(data[0])
-            self.add_chromatogramm(data[1:])
-        else:
-            pass # error -> signal?
-
-
     def find_peaks(self, index):
         """Apply the integration algorithm.
         Returns the sampled data for inspection,
         analytical results are saved in the class instance.
         """
         assert index < len(self.cdata)
-        x = self.cdata[index].x
-        y = self.cdata[index].y
+        x, y = self.cdata[index]
         dt = self.cdata[index].dt
 
         # go through the data from left to right and sample the data according to peak_width
@@ -113,7 +124,7 @@ class CSIntegrator:
 
 
 
-class MBIntegrator:
+class MBIntegrator(Integrator):
 
     win_width = 21 # window_width for smoothing
 
@@ -143,28 +154,9 @@ class MBIntegrator:
         self.settings = {**default_values, **parameters}
 
 
-    def __getitem__(self, index):
-        return self.cdata[index]
-
-
-    def __len__(self):
-        return len(self.cdata)
-
-
-    def add_chromatogramm(self, data):
-        if isinstance(data, ChromData):
-            self.cdata.append(data)
-        elif isinstance(data, list) and len(data) > 0:
-            self.add_chromatogramm(data[0])
-            self.add_chromatogramm(data[1:])
-        else:
-            pass #TODO: should signal an error
-
-
     def find_peaks(self, index):
         assert index < len(self.cdata)
-        x = self.cdata[index].x
-        y = self.cdata[index].y
+        x, y = self.cdata[index]
         dt = self.cdata[index].dt
 
         # get the first and second derivative with a rolling average smoothing
@@ -233,6 +225,29 @@ class MBIntegrator:
 
         # TODO: last order of business - merge close lying end/start points of adjacent peaks
         return self.cdata[index].peaks
+
+
+    def find_local_minima(self, index, width):
+        x, y = self.cdata[index]
+        x_min = []
+        y_min = []
+        i_min = 0
+        i = 1
+        while i < len(y):
+            if y[i] < y[i_min]:
+                i_min = i
+            if i % width == 0:
+                x_min.append(x[i_min])
+                y_min.append(y[i_min])
+                i_min = i
+            i += 1
+        return x_min, y_min
+
+
+if __name__ == "__main__":
+    m = MBIntegrator()
+    m.add_chromatogramm(ChromData("./data/SST.txt"))
+    m.find_peaks(0)
 
 
 # =============================================================================

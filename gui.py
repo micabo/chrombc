@@ -3,13 +3,14 @@
 Evaluation of chromatographic data.
 GUI
 """
+import os
 
 from cutil import ChromData
 from integrator import CSIntegrator, MBIntegrator
 
 import tkinter as tk
 from tkinter import ttk
-import tkinter.filedialog as tkfile
+from tkinter import filedialog
 
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
@@ -22,23 +23,34 @@ class RibbonFrame(ttk.Frame):
     def __init__(self, master=None):
         ttk.Frame.__init__(self, master)
 
-        #self.ent_1_str = tk.StringVar()
+        self.smooth_val = tk.StringVar()
+        self.smooth_val.set("0")
 
-        self.btn_1 = ttk.Button(master=self, text="Toggle Integration",
-                                command=master._toggle_int)
-        self.btn_2 = ttk.Button(master=self, text="Run Integration",
-                                command=self.master.run_integration)
-        self.btn_3 = ttk.Button(master=self, text="Quit", command=master._quit)
-        #self.ent_1 = tk.Entry(master=self, textvariable=self.ent_1_str)
+        self.ent_smooth = tk.Entry(master=self, textvariable=self.smooth_val)
+        self.btn_smooth = ttk.Button(master=self, text="Smooth",
+                                     command=master.apply_smoothing)
+        self.btn_baseline = ttk.Button(master=self, text="Baseline",
+                                       command=master.draw_baseline)
+        self.btn_int = ttk.Button(master=self, text="Run Integration",
+                                  command=self.master.run_integration)
+        self.btn_tgl = ttk.Button(master=self, text="Toggle Integration",
+                                  command=master.toggle_int)
 
-        #self.ent_1.pack(side=tk.LEFT)
-        self.btn_2.pack(side=tk.LEFT)
-        self.btn_1.pack(side=tk.LEFT)
-        self.btn_3.pack(side=tk.LEFT)
+        self.btn_quit = ttk.Button(master=self, text="Quit", command=master._quit)
 
-        #self.ent_1.focus_set()
-        #self.ent_1_str.set("default")
-        #self.ent_1_str.get()
+
+        self.ent_smooth.pack(side=tk.LEFT)
+        self.btn_smooth.pack(side=tk.LEFT)
+        self.btn_baseline.pack(side=tk.LEFT)
+        self.btn_int.pack(side=tk.LEFT)
+        self.btn_tgl.pack(side=tk.LEFT)
+        self.btn_quit.pack(side=tk.LEFT)
+
+        self.ent_smooth.focus_set()
+
+
+    def get_sval(self):
+        return int(self.smooth_val.get())
 
 
 
@@ -123,14 +135,16 @@ class PlotFrame(ttk.Frame):
             self.integral = [[],[]]
             self.draw_integral(e)
 
+
     def _resize(self, event):
         w = event.widget
         print(w, event.width, event.height)
 
 
-    def plot_curve(self, data):
-        self.ax.clear()  # clears everything - also the zoom level...
-        self.ax.plot(data.x, data.y)
+    def plot_curve(self, x, y, clear=True):
+        if clear:
+            self.ax.clear()
+        self.ax.plot(x, y)
         self.canvas.draw()
 
 
@@ -163,15 +177,6 @@ class TestGUI(ttk.Frame):
         self.integrate = False
 
 
-    def set_current_data(self, event):
-        # get index of currently selected data
-        self.current_data = event.widget.curselection()[0]
-        self.plotdisplay.plot_curve(self.data[self.current_data])
-        if self.data[self.current_data].peaks:
-            self.plotdisplay.plot_peaks(
-                self.data[self.current_data].peaks)
-
-
     def _setup_menubar(self):
         self.master.wm_title("ChroMBC")
         self.menubar = tk.Menu(master=self)
@@ -193,16 +198,16 @@ class TestGUI(ttk.Frame):
 
 
     def _load(self):
-        file = tkfile.askopenfile()
+        file = filedialog.askopenfile(initialdir=os.getcwd())
         if file:
             self.current_data = len(self.data)
             self.data.add_chromatogramm(ChromData(file.name))
-            self.plotdisplay.plot_curve(self.data[self.current_data])
+            self.plotdisplay.plot_curve(*self.data[self.current_data])
             self.sidepane.add_entry(self.current_data, file.name.split("/")[-1])
 
 
     def _saveas(self):
-        self.file = tkfile.asksaveasfile()
+        self.file = filedialog.asksaveasfile()
         if self.file:
             self.file.write("saved")
 
@@ -212,8 +217,30 @@ class TestGUI(ttk.Frame):
         self.master.quit()
 
 
-    def _toggle_int(self):
+    def toggle_int(self):
         self.integrate = not self.integrate
+
+
+    def set_current_data(self, event):
+        # get index of currently selected data
+        self.current_data = event.widget.curselection()[0]
+        self.plotdisplay.plot_curve(self.data[self.current_data])
+        if self.data[self.current_data].peaks:
+            self.plotdisplay.plot_peaks(
+                *self.data[self.current_data].peaks)
+
+
+    def apply_smoothing(self):
+        width = self.ribbon.get_sval()
+        if width == 0:
+            return
+        self.data[self.current_data].smooth(width)
+        self.plotdisplay.plot_curve(*self.data[self.current_data])
+
+
+    def draw_baseline(self):
+        baseline = self.data.find_local_minima(self.current_data, 500)
+        self.plotdisplay.plot_curve(*baseline, clear=False)
 
 
     def run_integration(self):
