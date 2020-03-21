@@ -1,12 +1,11 @@
 # -*- coding: utf-8 -*-
 """
-Created on Sat Mar 14 10:08:49 2020
-
-@author: miggi
+Evaluation of chromatographic data.
+GUI
 """
 
 from cutil import ChromData
-from integrator import CSIntegrator
+from integrator import CSIntegrator, CSIntegrator
 
 import tkinter as tk
 from tkinter import ttk
@@ -15,6 +14,7 @@ import tkinter.filedialog as tkfile
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
 from matplotlib.backend_bases import key_press_handler
+
 
 
 class RibbonFrame(ttk.Frame):
@@ -51,6 +51,9 @@ class SidePaneFrame(ttk.Frame):
         self.lib_1.pack(side=tk.LEFT, fill=tk.BOTH, expand=1)
         self.scroll.pack(side=tk.LEFT, fill=tk.Y, expand=1)
 
+
+    def add_entry(self, index, entry):
+        self.lib_1.insert(index, entry)
 
 
 
@@ -102,8 +105,10 @@ class PlotFrame(ttk.Frame):
 
 
     def plot_curve(self, data):
+        self.ax.clear()  # clears everything - also the zoom level...
         self.ax.plot(data.x, data.y)
         self.canvas.draw()
+
 
     def plot_peaks(self, peaks):
         for peak in peaks:
@@ -112,7 +117,6 @@ class PlotFrame(ttk.Frame):
                 [peak.start.y, peak.end.y],
                 'k', linewidth = 0.5)
         self.canvas.draw()
-
 
 
     def draw_integral(self, e):
@@ -139,18 +143,28 @@ class TestGUI(ttk.Frame):
 
         #self.datafiles = tk.StringVar(value=["file {}".format(i) for i in range(100)])
         self.datafiles = tk.StringVar(value=[])
-        self.data = []
+        self.data = CSIntegrator()
         self.current_data = None
 
-        self._setup_menubar(master)
+        self._setup_menubar()
         self._setup_panes()
 
+        self.bind_all("<<ListboxSelect>>", self.set_current_data)
         self.bind_all("<Escape>", lambda x: print("esc", x))
 
         self.integrate = False
 
 
-    def _setup_menubar(self, master):
+    def set_current_data(self, event):
+        # get index of currently selected data
+        self.current_data = event.widget.curselection()[0]
+        self.plotdisplay.plot_curve(self.data.cdata[self.current_data])
+        if self.data.cdata[self.current_data].peaks:
+            self.plotdisplay.plot_peaks(
+                self.data.cdata[self.current_data].peaks)
+
+
+    def _setup_menubar(self):
         self.master.wm_title("ChroMBC")
         self.menubar = tk.Menu(master=self)
         self.filemenu = tk.Menu(self.menubar)
@@ -161,25 +175,22 @@ class TestGUI(ttk.Frame):
 
 
     def _setup_panes(self):
-        self.frm_btn = RibbonFrame(self)
-        self.frm_side = SidePaneFrame(self, datafiles=self.datafiles)
-        self.frm_plot = PlotFrame(self, use_mpl=True)
+        self.ribbon = RibbonFrame(self)
+        self.sidepane = SidePaneFrame(self, datafiles=self.datafiles)
+        self.plotdisplay = PlotFrame(self, use_mpl=True)
 
-        self.frm_btn.pack(side=tk.TOP)
-        self.frm_side.pack(side=tk.LEFT, fill=tk.BOTH, expand=1)
-        self.frm_plot.pack(side=tk.LEFT, fill=tk.BOTH, expand=1)
+        self.ribbon.pack(side=tk.TOP)
+        self.sidepane.pack(side=tk.LEFT, fill=tk.BOTH, expand=1)
+        self.plotdisplay.pack(side=tk.LEFT, fill=tk.BOTH, expand=1)
 
 
     def _load(self):
-        self.file = tkfile.askopenfile()
-        if self.file:
-            self.data.append(dict(
-                filename=self.file.name,
-                raw_data=ChromData(self.file.name)))
-            self.data[-1]["processed_data"] = CSIntegrator(self.data[-1]["raw_data"])
-            self.frm_plot.plot_curve(self.data[-1]["processed_data"])
-            self.current_data = len(self.data) - 1
-            self.datafiles.set(self.file.name)
+        file = tkfile.askopenfile()
+        if file:
+            self.current_data = len(self.data.cdata)
+            self.data.add_chromatogramm(ChromData(file.name))
+            self.plotdisplay.plot_curve(self.data.cdata[self.current_data])
+            self.sidepane.add_entry(self.current_data, file.name.split("/")[-1])
 
 
     def _saveas(self):
@@ -198,10 +209,8 @@ class TestGUI(ttk.Frame):
 
 
     def run_integration(self):
-        self.data[self.current_data]["processed_data"].find_peaks()
-        self.frm_plot.plot_peaks(
-            self.data[self.current_data]["processed_data"].peaks)
-
+        self.data.find_peaks(self.current_data)
+        self.plotdisplay.plot_peaks(self.data.cdata[self.current_data].peaks)
 
 
 if __name__ == "__main__":

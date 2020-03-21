@@ -99,6 +99,30 @@ class ChromData:
         else:
             self._build_from_xy(path)
 
+        self.peaks = []
+        self.peak_table = []
+
+
+    def add_peak(self, peak):
+        self.peaks.append(peak)
+
+
+    def build_peak_table(self):
+        cumulative_area = 0
+        for peak in self.peaks:
+            peak_area = integrate_peak(peak, self.x, self.y)
+            cumulative_area += peak_area
+            self.peak_table.append(dict(RT=peak.apex.x, Area=peak_area))
+        for peak in self.peak_table:
+            peak['Area%'] = 100 * peak['Area'] / cumulative_area
+
+
+    def print_peak_table(self):
+        table = []
+        for peak in self.peak_table:
+            table.append("RT: {RT:6.2}\tArea: {Area:6.3}\tArea%: {Area%:6.2}".format(**peak))
+        return table
+
 
     def _build_from_cdf(self, path):
         d = Dataset(path, "r", format="NETCDF3_CLASSIC")
