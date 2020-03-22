@@ -20,24 +20,24 @@ from matplotlib.backend_bases import key_press_handler
 
 class RibbonFrame(ttk.Frame):
     "Frame containing several buttons etc. on top of screen == 'Ribbon'"
-    def __init__(self, master=None):
+    def __init__(self, master=None, target=None):
         ttk.Frame.__init__(self, master)
+        self.target = target
 
         self.smooth_val = tk.StringVar()
         self.smooth_val.set("0")
 
         self.ent_smooth = tk.Entry(master=self, textvariable=self.smooth_val)
         self.btn_smooth = ttk.Button(master=self, text="Smooth",
-                                     command=master.apply_smoothing)
+                                     command=self.target.apply_smoothing)
         self.btn_baseline = ttk.Button(master=self, text="Baseline",
-                                       command=master.draw_baseline)
+                                       command=self.target.draw_baseline)
         self.btn_int = ttk.Button(master=self, text="Run Integration",
-                                  command=self.master.run_integration)
+                                  command=self.target.run_integration)
         self.btn_tgl = ttk.Button(master=self, text="Toggle Integration",
-                                  command=master.toggle_int)
+                                  command=self.target.toggle_int)
 
-        self.btn_quit = ttk.Button(master=self, text="Quit", command=master._quit)
-
+        self.btn_quit = ttk.Button(master=self, text="Quit", command=self.target._quit)
 
         self.ent_smooth.pack(side=tk.LEFT)
         self.btn_smooth.pack(side=tk.LEFT)
@@ -54,7 +54,7 @@ class RibbonFrame(ttk.Frame):
 
 
 
-class SidePaneFrame(ttk.Frame):
+class DataChoose(ttk.Frame):
     "SidePane contains a listbox populated with data files"
     def __init__(self, master=None, datafiles=None):
         ttk.Frame.__init__(self, master)
@@ -73,23 +73,12 @@ class SidePaneFrame(ttk.Frame):
 
 class PlotFrame(ttk.Frame):
     "Handles the display of data and interactive integration"
-    def __init__(self, master=None, use_mpl=False):
+    def __init__(self, master=None, target=None):
         ttk.Frame.__init__(self, master)
-
-        if use_mpl:
-            self._build_matplotlib()
-        else:
-            self._build_native()
+        self.target = target
+        self._build_matplotlib()
 
         self.integral = [[],[]]
-
-
-    def _build_native(self):
-        self.canvas = tk.Canvas(self, width=1000, height=600, bg="white")
-        self.canvas.create_line(0, 0, 50, 50)
-        self.canvas.bind("<Button-1>", self._click)
-        self.canvas.bind("<Configure>", self._resize)
-        self.canvas.pack(fill=tk.BOTH, expand=1)
 
 
     def _build_matplotlib(self):
@@ -121,7 +110,7 @@ class PlotFrame(ttk.Frame):
 
 
     def draw_integral(self, e):
-        if not self.master.integrate:
+        if not self.target.integrate:
             return
         if len(self.integral[0]) == 0:
             self.integral[0].append(e.xdata)
@@ -157,6 +146,33 @@ class PlotFrame(ttk.Frame):
         self.canvas.draw()
 
 
+class ResultFrame(ttk.Frame):
+    "Display the results"
+    def __init__(self, master=None):
+        ttk.Frame.__init__(self, master)
+        self.result_scroll = tk.Scrollbar(master=self)
+        self.result_txt = tk.Text(self, yscrollcommand=self.result_scroll.set)
+        self.result_scroll.config(command=self.result_txt.yview)
+        self.result_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+        self.result_txt.pack(side=tk.TOP, fill=tk.X)
+
+
+    def print_results(self, peak_table):
+        self.result_txt.delete("1.0", tk.END)
+
+        l = ["{RT:>10.2f}|{Area:>15.3f}|{Area%:>10.2f}".format(**peak) for peak in peak_table]
+        s = "\n".join(l)
+        header = "{:10}|{:15}|{:10}\n".format("RT", "Area", "Area%")
+        header += "{:10}|{:15}|{:10}\n".format("-" * 10, "-" * 15, "-" * 10)
+        self.result_txt.insert("1.0", header + s)
+
+
+class IntegratorFrame(ttk.Frame):
+    def __init__(self, master=None):
+        ttk.Frame.__init__(self, master)
+        # gui interface to the parameters of the integrator
+
+
 
 class TestGUI(ttk.Frame):
     "Main Application"
@@ -166,7 +182,7 @@ class TestGUI(ttk.Frame):
         #self.datafiles = tk.StringVar(value=["file {}".format(i) for i in range(100)])
         self.datafiles = tk.StringVar(value=[])
         self.data = MBIntegrator()
-        self.current_data = None
+        self.current_data = 0
 
         self._setup_menubar()
         self._setup_panes()
@@ -188,22 +204,35 @@ class TestGUI(ttk.Frame):
 
 
     def _setup_panes(self):
-        self.ribbon = RibbonFrame(self)
-        self.sidepane = SidePaneFrame(self, datafiles=self.datafiles)
-        self.plotdisplay = PlotFrame(self, use_mpl=True)
-
+        # row 1
+        self.row1 = ttk.Frame(self)
+        self.ribbon = RibbonFrame(self.row1, target=self)
         self.ribbon.pack(side=tk.TOP)
-        self.sidepane.pack(side=tk.LEFT, fill=tk.BOTH, expand=1)
+
+        # row 2
+        self.row2 = ttk.Frame(self)
+        self.data_choose = DataChoose(self.row2, datafiles=self.datafiles)
+        self.plotdisplay = PlotFrame(self.row2, target=self)
+        self.data_choose.pack(side=tk.LEFT, fill=tk.BOTH, expand=1)
         self.plotdisplay.pack(side=tk.LEFT, fill=tk.BOTH, expand=1)
+
+        # row 3
+        self.row3 = ttk.Frame(self)
+        self.result_view = ResultFrame(self.row3)
+        self.result_view.pack(side=tk.TOP, fill=tk.X, expand=1)
+
+        self.row1.pack(side=tk.TOP)
+        self.row2.pack(side=tk.TOP, fill=tk.BOTH, expand=1)
+        self.row3.pack(side=tk.TOP, fill=tk.X, expand=1)
 
 
     def _load(self):
-        file = filedialog.askopenfile(initialdir=os.getcwd())
+        file = filedialog.askopenfile(initialdir=os.getcwd() + "\\data")
         if file:
             self.current_data = len(self.data)
             self.data.add_chromatogramm(ChromData(file.name))
             self.plotdisplay.plot_curve(*self.data[self.current_data])
-            self.sidepane.add_entry(self.current_data, file.name.split("/")[-1])
+            self.data_choose.add_entry(self.current_data, file.name.split("/")[-1])
 
 
     def _saveas(self):
@@ -223,8 +252,13 @@ class TestGUI(ttk.Frame):
 
     def set_current_data(self, event):
         # get index of currently selected data
-        self.current_data = event.widget.curselection()[0]
-        self.plotdisplay.plot_curve(self.data[self.current_data])
+        try:
+            self.current_data = event.widget.curselection()[0]
+        except IndexError:
+            # no data loaded yet, tuple returned from curselection() is empty
+            return
+
+        self.plotdisplay.plot_curve(*self.data[self.current_data])
         if self.data[self.current_data].peaks:
             self.plotdisplay.plot_peaks(
                 *self.data[self.current_data].peaks)
@@ -239,14 +273,19 @@ class TestGUI(ttk.Frame):
 
 
     def draw_baseline(self):
-        baseline = self.data.find_local_minima(self.current_data, 500)
+        baseline = self.data.find_baseline(self.current_data)
         self.plotdisplay.plot_curve(*baseline, clear=False)
 
 
     def run_integration(self):
         self.data.find_peaks(self.current_data)
         self.plotdisplay.plot_peaks(self.data[self.current_data].peaks)
+        self.display_results()
 
+
+    def display_results(self):
+        peak_table = self.data[self.current_data].get_peak_table()
+        self.result_view.print_results(peak_table)
 
 
 if __name__ == "__main__":

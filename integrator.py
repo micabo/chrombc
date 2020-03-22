@@ -6,11 +6,8 @@ All times in seconds.
 """
 
 from cutil import ChromData, Point, Peak, gaussian, fit
-from bisect import bisect_left
-
-import sys
 import numpy as np
-import pandas as pd
+import pdb
 
 
 class Integrator:
@@ -39,6 +36,10 @@ class Integrator:
 
 
     def find_peaks(self, index):
+        pass
+
+
+    def find_baseline(self, index):
         pass
 
 
@@ -154,19 +155,18 @@ class MBIntegrator(Integrator):
         self.settings = {**default_values, **parameters}
 
 
+    def set_settings(self, **parameters):
+        self.settings = {**self.settings, **parameters}
+
+
     def find_peaks(self, index):
         assert index < len(self.cdata)
         x, y = self.cdata[index]
-        dt = self.cdata[index].dt
 
-        # get the first and second derivative with a rolling average smoothing
-        dy = pd.Series(np.gradient(y, dt)).rolling(
-            window=MBIntegrator.win_width, center=True).mean()
-        ddy = pd.Series(np.gradient(dy, dt)).rolling(
-            window=MBIntegrator.win_width, center=True).mean()
+        # get the first and second derivative
+        dy, ddy = self.cdata[index].get_derivatives(MBIntegrator.win_width)
 
         point_type = np.full_like(x, 0, dtype=np.int8)
-
 
         N = len(self.cdata[index])
         N_start = int((MBIntegrator.win_width + 1)/2) or 1
@@ -224,10 +224,16 @@ class MBIntegrator(Integrator):
             i += 1
 
         # TODO: last order of business - merge close lying end/start points of adjacent peaks
+
+        self.cdata[index].build_peak_table()
         return self.cdata[index].peaks
 
 
-    def find_local_minima(self, index, width):
+    def find_baseline(self, index):
+        # should implement timed events
+        width = 500
+        threshold = 0.01
+
         x, y = self.cdata[index]
         x_min = []
         y_min = []
@@ -241,6 +247,35 @@ class MBIntegrator(Integrator):
                 y_min.append(y[i_min])
                 i_min = i
             i += 1
+
+        # clean baseline -> i.e. search for "peaks"
+        i = 0
+        #pdb.set_trace()
+
+        # add some manual events (for now), to test algorithm
+        while i < len(y_min) - 1:
+            j = i + 1
+
+            if x_min[i] > 1200:
+                threshold = 1
+
+            while j < len(y_min):
+                slope = (y_min[j] - y_min[i]) / (x_min[j] - x_min[i])
+                if abs(slope) > threshold:
+                    j += 1
+                    continue
+
+                # slope is less than threshold
+                if j - i > 1:
+                    k = i + 1
+                    while k < j:  # fill in interpolated values
+                        y_min[k] = y_min[i] + slope * (x_min[k] - x_min[i])
+                        k += 1
+                i = j
+                break
+            else:
+                break
+
         return x_min, y_min
 
 
@@ -251,22 +286,6 @@ if __name__ == "__main__":
 
 
 # =============================================================================
-## NOT GENERALIZED TO MULITPLE CHROMATOGRAMS!
-#     def create_baseline(self):
-#         # create a crudely interpolated baseline
-#         # peaks which were not detected are taken as baseline
-#         self.baseline = np.copy(self.y)
-#         for p in self.peaks:
-#             start = bisect_left(self.x, p.start.x)
-#             end = bisect_left(self.x, p.end.x)
-#             slope = (self.y[end] - self.y[start])/(self.x[end] - self.x[start])
-#             i = start
-#             while i <= end:
-#                 self.baseline[i] = self.y[start] + slope * (self.x[i] - self.x[start])
-#                 i += 1
-#         return self.baseline
-#
-#
 #     def fit_peaks(self):
 #         "fit peaks with gaussian"
 #         self.create_baseline()

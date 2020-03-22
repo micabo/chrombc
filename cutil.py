@@ -143,6 +143,14 @@ class ChromData:
         self.peaks.append(peak)
 
 
+    def get_derivatives(self, width):
+        self.dy = pd.Series(np.gradient(self.y, self.dt)).rolling(
+            window=width, center=True).mean()
+        self.ddy = pd.Series(np.gradient(self.dy, self.dt)).rolling(
+            window=width, center=True).mean()
+        return self.dy, self.ddy
+
+
     def smooth(self, width):
         self.y = pd.Series(self.y).rolling(window=width, center=True).mean()
         self.peaks = []
@@ -160,11 +168,8 @@ class ChromData:
             peak['Area%'] = 100 * peak['Area'] / cumulative_area
 
 
-    def print_peak_table(self):
-        table = []
-        for peak in self.peak_table:
-            table.append("RT: {RT:6.2}\tArea: {Area:6.3}\tArea%: {Area%:6.2}".format(**peak))
-        return table
+    def get_peak_table(self):
+        return self.peak_table
 
 
 if __name__ == "__main__":
