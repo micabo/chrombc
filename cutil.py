@@ -139,6 +139,11 @@ class ChromData:
         np.savetxt(path, np.array((self.x, self.y)).T)
 
 
+    def clear_peaks(self):
+        self.peaks = []
+        self.peak_table = []
+
+
     def add_peak(self, peak):
         self.peaks.append(peak)
 
@@ -160,10 +165,12 @@ class ChromData:
 
     def build_peak_table(self):
         cumulative_area = 0
+        peak_no = 0
         for peak in self.peaks:
             peak_area = integrate_peak(peak, self.x, self.y)
             cumulative_area += peak_area
-            self.peak_table.append(dict(RT=peak.apex.x, Area=peak_area))
+            peak_no += 1
+            self.peak_table.append(dict(No=peak_no, RT=peak.apex.x, Area=peak_area))
         for peak in self.peak_table:
             peak['Area%'] = 100 * peak['Area'] / cumulative_area
 
@@ -172,6 +179,7 @@ class ChromData:
         return self.peak_table
 
 
+#-----------------------------------------------------------------------------
 if __name__ == "__main__":
     c = ChromData("./data/SST.txt")
     x, y = c

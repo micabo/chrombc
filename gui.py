@@ -16,8 +16,10 @@ from matplotlib.figure import Figure
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
 from matplotlib.backend_bases import key_press_handler
 
+import itertools as it
 
 
+#-----------------------------------------------------------------------------
 class RibbonFrame(ttk.Frame):
     "Frame containing several buttons etc. on top of screen == 'Ribbon'"
     def __init__(self, master=None, target=None):
@@ -53,7 +55,7 @@ class RibbonFrame(ttk.Frame):
         return int(self.smooth_val.get())
 
 
-
+#-----------------------------------------------------------------------------
 class DataChoose(ttk.Frame):
     "SidePane contains a listbox populated with data files"
     def __init__(self, master=None, datafiles=None):
@@ -70,7 +72,7 @@ class DataChoose(ttk.Frame):
         self.lib_1.insert(index, entry)
 
 
-
+#-----------------------------------------------------------------------------
 class PlotFrame(ttk.Frame):
     "Handles the display of data and interactive integration"
     def __init__(self, master=None, target=None):
@@ -79,6 +81,7 @@ class PlotFrame(ttk.Frame):
         self._build_matplotlib()
 
         self.integral = [[],[]]
+        self.color = it.cycle(["black", "red"])
 
 
     def _build_matplotlib(self):
@@ -130,28 +133,33 @@ class PlotFrame(ttk.Frame):
         print(w, event.width, event.height)
 
 
-    def plot_curve(self, x, y, clear=True):
+    def plot_curve(self, x, y, clear=True, **pparam):
         if clear:
             self.ax.clear()
-        self.ax.plot(x, y)
+        self.ax.plot(x, y, **pparam)
         self.canvas.draw()
 
 
-    def plot_peaks(self, peaks):
+    def plot_peaks(self, peaks, clear=False):
+        if clear:
+            self.ax.clear()
+        color = next(self.color)
         for peak in peaks:
             self.ax.plot(
                 [peak.start.x, peak.end.x],
                 [peak.start.y, peak.end.y],
-                'k', linewidth = 0.5)
+                linewidth = 0.5,
+                color=color)
         self.canvas.draw()
 
 
+#-----------------------------------------------------------------------------
 class ResultFrame(ttk.Frame):
     "Display the results"
     def __init__(self, master=None):
         ttk.Frame.__init__(self, master)
         self.result_scroll = tk.Scrollbar(master=self)
-        self.result_txt = tk.Text(self, yscrollcommand=self.result_scroll.set)
+        self.result_txt = tk.Text(self, yscrollcommand=self.result_scroll.set, height=10)
         self.result_scroll.config(command=self.result_txt.yview)
         self.result_scroll.pack(side=tk.RIGHT, fill=tk.Y)
         self.result_txt.pack(side=tk.TOP, fill=tk.X)
@@ -160,20 +168,43 @@ class ResultFrame(ttk.Frame):
     def print_results(self, peak_table):
         self.result_txt.delete("1.0", tk.END)
 
-        l = ["{RT:>10.2f}|{Area:>15.3f}|{Area%:>10.2f}".format(**peak) for peak in peak_table]
+        l = ["{No:>3}|{RT:>10.2f}|{Area:>15.3f}|{Area%:>10.2f}".format(**peak) for peak in peak_table]
         s = "\n".join(l)
-        header = "{:10}|{:15}|{:10}\n".format("RT", "Area", "Area%")
-        header += "{:10}|{:15}|{:10}\n".format("-" * 10, "-" * 15, "-" * 10)
+        header = "{:3}|{:10}|{:15}|{:10}\n".format("No", "RT", "Area", "Area%")
+        header += "{:3}|{:10}|{:15}|{:10}\n".format("-" * 3, "-" * 10, "-" * 15, "-" * 10)
         self.result_txt.insert("1.0", header + s)
 
 
+#-----------------------------------------------------------------------------
 class IntegratorFrame(ttk.Frame):
-    def __init__(self, master=None):
+    "Interaction with integrator parameters"
+    def __init__(self, master=None, target=None):
         ttk.Frame.__init__(self, master)
+        self.target = target
         # gui interface to the parameters of the integrator
+        self.frames = []
+        self.entries = []
+        self.buttons = []
+        for label in ["threshold", "min_height", "min_width"]:
+            self.frames.append(ttk.Frame(self))
+            self.entries.append(tk.Entry(self.frames[-1]))
+            self.buttons.append(ttk.Button(
+                self.frames[-1],
+                text=label,
+                command=self.change_param(self.entries[-1], label)))
+
+            self.entries[-1].pack(side=tk.LEFT)
+            self.buttons[-1].pack(side=tk.LEFT)
+            self.frames[-1].pack(side=tk.TOP)
 
 
+    def change_param(self, entry, name):
+        def _change():
+            self.target.change_parameter(name, float(entry.get()))
+        return _change
 
+
+#-----------------------------------------------------------------------------
 class TestGUI(ttk.Frame):
     "Main Application"
     def __init__(self, master=None):
@@ -204,26 +235,28 @@ class TestGUI(ttk.Frame):
 
 
     def _setup_panes(self):
-        # row 1
-        self.row1 = ttk.Frame(self)
-        self.ribbon = RibbonFrame(self.row1, target=self)
+        self.frame1 = ttk.Frame(self)
+        self.ribbon = RibbonFrame(self.frame1, target=self)
         self.ribbon.pack(side=tk.TOP)
 
-        # row 2
-        self.row2 = ttk.Frame(self)
-        self.data_choose = DataChoose(self.row2, datafiles=self.datafiles)
-        self.plotdisplay = PlotFrame(self.row2, target=self)
-        self.data_choose.pack(side=tk.LEFT, fill=tk.BOTH, expand=1)
-        self.plotdisplay.pack(side=tk.LEFT, fill=tk.BOTH, expand=1)
+        self.frame2 = ttk.Frame(self)
+        self.data_choose = DataChoose(self.frame2, datafiles=self.datafiles)
+        self.data_choose.pack(fill=tk.BOTH, expand=1)
 
-        # row 3
-        self.row3 = ttk.Frame(self)
-        self.result_view = ResultFrame(self.row3)
-        self.result_view.pack(side=tk.TOP, fill=tk.X, expand=1)
+        self.frame3 = ttk.Frame(self)
+        self.plotdisplay = PlotFrame(self.frame3, target=self)
+        self.plotdisplay.pack(side=tk.TOP, fill=tk.BOTH, expand=1)
 
-        self.row1.pack(side=tk.TOP)
-        self.row2.pack(side=tk.TOP, fill=tk.BOTH, expand=1)
-        self.row3.pack(side=tk.TOP, fill=tk.X, expand=1)
+        self.tabbed_view = ttk.Notebook(self.frame3)
+        self.result_view = ResultFrame(self.tabbed_view)
+        self.tabbed_view.add(self.result_view, text="Results")
+        self.int_view = IntegratorFrame(self.tabbed_view, self)
+        self.tabbed_view.add(self.int_view, text="Integrator")
+        self.tabbed_view.pack(side=tk.TOP, fill=tk.BOTH, expand=1)
+
+        self.frame1.pack(side=tk.TOP)
+        self.frame2.pack(side=tk.LEFT, fill=tk.BOTH, expand=1)
+        self.frame3.pack(side=tk.LEFT, fill=tk.X, expand=1)
 
 
     def _load(self):
@@ -264,6 +297,10 @@ class TestGUI(ttk.Frame):
                 *self.data[self.current_data].peaks)
 
 
+    def change_parameter(self, name, value):
+        self.data.settings[name] = value
+
+
     def apply_smoothing(self):
         width = self.ribbon.get_sval()
         if width == 0:
@@ -274,7 +311,7 @@ class TestGUI(ttk.Frame):
 
     def draw_baseline(self):
         baseline = self.data.find_baseline(self.current_data)
-        self.plotdisplay.plot_curve(*baseline, clear=False)
+        self.plotdisplay.plot_curve(*baseline, clear=False, linewidth=0.5)
 
 
     def run_integration(self):
@@ -288,7 +325,9 @@ class TestGUI(ttk.Frame):
         self.result_view.print_results(peak_table)
 
 
+#-----------------------------------------------------------------------------
 if __name__ == "__main__":
     root = tk.Tk()
+    root.geometry("1400x800+0+0")
     TestGUI(root).pack(fill=tk.BOTH, expand=1)
     root.mainloop()

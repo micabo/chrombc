@@ -6,10 +6,16 @@ All times in seconds.
 """
 
 from cutil import ChromData, Point, Peak, gaussian, fit
+from collections import namedtuple
 import numpy as np
 import pdb
 
 
+#-----------------------------------------------------------------------------
+Event = namedtuple("Event", ["name", "time", "value"])
+
+
+#-----------------------------------------------------------------------------
 class Integrator:
     """The typical interface of an integrator"""
     def __init__(self):
@@ -43,7 +49,7 @@ class Integrator:
         pass
 
 
-
+#-----------------------------------------------------------------------------
 class CSIntegrator(Integrator):
     "Mock-up of the ChemStation Integrator."
     sampling_ratio = 15  # number of points per peak
@@ -54,10 +60,10 @@ class CSIntegrator(Integrator):
 
         # define the default values for the initial events
         default_events = {"slope_sensitivity": 0.01/60,
-                       "peak_width": 0.2/60,
-                       "area_reject": 0.0,
-                       "area%_reject": 0.0,
-                       "height_reject": 0.0}
+                          "peak_width": 0.2/60,
+                          "area_reject": 0.0,
+                          "area%_reject": 0.0,
+                          "height_reject": 0.0}
 
         # overwrite these default values with the values given to the constructor
         self.events = {**default_events, **user_events}
@@ -124,10 +130,10 @@ class CSIntegrator(Integrator):
         return self.cdata[index].peaks
 
 
-
+#-----------------------------------------------------------------------------
 class MBIntegrator(Integrator):
 
-    win_width = 21 # window_width for smoothing
+    win_width = 21 # window_width for smoothing of derivatives
 
     # self.point_types - a dictionary of possible point types
     point_types = {
@@ -154,6 +160,13 @@ class MBIntegrator(Integrator):
             }
         self.settings = {**default_values, **parameters}
 
+        self.bl_events = []
+        self.bl_events.append(Event("threshold", 0, 0.01))
+        self.bl_events.append(Event("width", 0, 500))
+        self.bl_events.append(Event("threshold", 1200, 1))
+
+        self.bl_settings = {}
+
 
     def set_settings(self, **parameters):
         self.settings = {**self.settings, **parameters}
@@ -162,9 +175,9 @@ class MBIntegrator(Integrator):
     def find_peaks(self, index):
         assert index < len(self.cdata)
         x, y = self.cdata[index]
-
+        self.cdata[index].clear_peaks()
         # get the first and second derivative
-        dy, ddy = self.cdata[index].get_derivatives(MBIntegrator.win_width)
+        dy, ddy = self.cdata[index].get_derivatives(self.win_width)
 
         point_type = np.full_like(x, 0, dtype=np.int8)
 
@@ -232,11 +245,10 @@ class MBIntegrator(Integrator):
     def find_baseline(self, index):
         # should implement timed events
         width = 500
-        threshold = 0.01
 
         x, y = self.cdata[index]
-        x_min = []
-        y_min = []
+        x_min = [x[0]]
+        y_min = [y[0]]
         i_min = 0
         i = 1
         while i < len(y):
@@ -252,16 +264,19 @@ class MBIntegrator(Integrator):
         i = 0
         #pdb.set_trace()
 
-        # add some manual events (for now), to test algorithm
         while i < len(y_min) - 1:
             j = i + 1
 
-            if x_min[i] > 1200:
-                threshold = 1
+            for event in self.bl_events:
+                if event.time <= x_min[i]:
+                    # assume strictly ordered events
+                    self.bl_settings[event.name] = event.value
+                else:
+                    break
 
             while j < len(y_min):
                 slope = (y_min[j] - y_min[i]) / (x_min[j] - x_min[i])
-                if abs(slope) > threshold:
+                if abs(slope) > self.bl_settings["threshold"]:
                     j += 1
                     continue
 
@@ -274,11 +289,13 @@ class MBIntegrator(Integrator):
                 i = j
                 break
             else:
+                # end of j loop is reached without fulfilling the above criteria
                 break
 
         return x_min, y_min
 
 
+#-----------------------------------------------------------------------------
 if __name__ == "__main__":
     m = MBIntegrator()
     m.add_chromatogramm(ChromData("./data/SST.txt"))
