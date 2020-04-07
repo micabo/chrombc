@@ -1,12 +1,10 @@
 # -*- coding: utf-8 -*-
-"""
-Evaluation of chromatographic data.
-GUI
+"""GUI for evaluating chromatographic data
 """
 import os
 
 from cutil import ChromData
-from integrator import CSIntegrator, MBIntegrator
+from integrator import CSIntegrator, MBIntegrator, ScIntegrator
 
 import tkinter as tk
 from tkinter import ttk
@@ -97,19 +95,8 @@ class PlotFrame(ttk.Frame):
         self.canvas.mpl_connect("key_press_event", key_press_handler)
         self.canvas.mpl_connect("button_press_event", self.draw_integral)
         self.canvas.mpl_connect("button_release_event", self.draw_integral)
-# =============================================================================
-#         self.tk_canvas.bind("<Configure>", self._resize)
-#         self.tk_canvas.bind("<Button-1>", self._click)
-# =============================================================================
         self.canvas.draw()
         self.tk_canvas.pack(side=tk.TOP, fill=tk.BOTH, expand=1)
-
-
-    def _click(self, event):
-        c = event.widget
-        x = c.canvasx(event.x)
-        y = c.canvasy(event.y)
-        c.create_line(0, 0, x, y)
 
 
     def draw_integral(self, e):
@@ -126,11 +113,6 @@ class PlotFrame(ttk.Frame):
         else:
             self.integral = [[],[]]
             self.draw_integral(e)
-
-
-    def _resize(self, event):
-        w = event.widget
-        print(w, event.width, event.height)
 
 
     def plot_curve(self, x, y, clear=True, **pparam):
@@ -167,7 +149,6 @@ class ResultFrame(ttk.Frame):
 
     def print_results(self, peak_table):
         self.result_txt.delete("1.0", tk.END)
-
         l = ["{No:>3}|{RT:>10.2f}|{Area:>15.3f}|{Area%:>10.2f}".format(**peak) for peak in peak_table]
         s = "\n".join(l)
         header = "{:3}|{:10}|{:15}|{:10}\n".format("No", "RT", "Area", "Area%")
@@ -181,21 +162,29 @@ class IntegratorFrame(ttk.Frame):
     def __init__(self, master=None, target=None):
         ttk.Frame.__init__(self, master)
         self.target = target
+        self._build_interface()
+        
+    def _build_interface(self):
         # gui interface to the parameters of the integrator
-        self.frames = []
         self.entries = []
         self.buttons = []
-        for label in ["threshold", "min_height", "min_width"]:
-            self.frames.append(ttk.Frame(self))
-            self.entries.append(tk.Entry(self.frames[-1]))
+        self.variables = []
+        
+        for label, default_value in self.target.data.parameters.items():
+            self.variables.append(tk.StringVar())
+            self.variables[-1].set(default_value)
+            
+            self.entries.append(tk.Entry(
+                self,
+                textvariable=self.variables[-1]))
+                
             self.buttons.append(ttk.Button(
-                self.frames[-1],
-                text=label,
+                self,
+                text="set " + label,
                 command=self.change_param(self.entries[-1], label)))
 
-            self.entries[-1].pack(side=tk.LEFT)
-            self.buttons[-1].pack(side=tk.LEFT)
-            self.frames[-1].pack(side=tk.TOP)
+            self.entries[-1].grid(column=1, row=len(self.entries), sticky=(tk.W, tk.E))
+            self.buttons[-1].grid(column=2, row=len(self.entries), sticky=(tk.W, tk.E))
 
 
     def change_param(self, entry, name):
@@ -212,20 +201,20 @@ class TestGUI(ttk.Frame):
 
         #self.datafiles = tk.StringVar(value=["file {}".format(i) for i in range(100)])
         self.datafiles = tk.StringVar(value=[])
-        self.data = MBIntegrator()
+        self.data = ScIntegrator()
         self.current_data = 0
 
         self._setup_menubar()
         self._setup_panes()
 
         self.bind_all("<<ListboxSelect>>", self.set_current_data)
-        self.bind_all("<Escape>", lambda x: print("esc", x))
 
         self.integrate = False
 
 
     def _setup_menubar(self):
         self.master.wm_title("ChroMBC")
+        self.master.wm_geometry("1400x800+0+0")
         self.menubar = tk.Menu(master=self)
         self.filemenu = tk.Menu(self.menubar)
         self.filemenu.add_command(label="Load", command=self._load)
@@ -298,7 +287,7 @@ class TestGUI(ttk.Frame):
 
 
     def change_parameter(self, name, value):
-        self.data.settings[name] = value
+        self.data.parameters[name] = value
 
 
     def apply_smoothing(self):
@@ -328,6 +317,5 @@ class TestGUI(ttk.Frame):
 #-----------------------------------------------------------------------------
 if __name__ == "__main__":
     root = tk.Tk()
-    root.geometry("1400x800+0+0")
     TestGUI(root).pack(fill=tk.BOTH, expand=1)
     root.mainloop()

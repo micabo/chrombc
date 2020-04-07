@@ -1,6 +1,5 @@
 # -*- coding: utf-8 -*-
-"""
-Helper Constants/Functions/Classes
+"""Helper Constants/Functions/Classes
 """
 
 from bisect import bisect_left
@@ -8,6 +7,7 @@ from bisect import bisect_left
 from scipy.integrate import trapz
 from scipy.optimize import curve_fit
 from scipy.special import erfc
+from scipy.signal import find_peaks
 
 from collections import namedtuple
 from netCDF4 import Dataset
@@ -55,7 +55,7 @@ def emg(x, h, mu, sigma, tau):
             erfc((s_t - dx/sigma) * SQRT_1_2))
 
 
-def fit(x, y, start, stop, f, initial_guess):
+def fit_peak(x, y, start, stop, f, initial_guess):
     "Fit x-y data with a function f within the specified range (start/stop)"
     start_i = bisect_left(x, start)
     stop_i = bisect_left(x, stop)
@@ -65,6 +65,7 @@ def fit(x, y, start, stop, f, initial_guess):
 
 def integrate_peak(peak, x, y):
     "Integrate a peak (given as named tuple -> need start/end)"
+    # TODO: 0 is taken as the baseline -> needs to be adjusted / corrected!!!
     start_i = bisect_left(x, peak.start.x)
     stop_i = bisect_left(x, peak.end.x)
     return trapz(y[start_i:stop_i], x[start_i:stop_i])
@@ -126,6 +127,7 @@ class ChromData:
         self.y_unit = str(d.detector_unit)
         self.x_unit = str(d.retention_unit)
         self.raw = False
+        #TODO: the read data on peak names etc. so far is unused -> do sth with it
         d.close()
 
 
@@ -149,6 +151,9 @@ class ChromData:
 
 
     def get_derivatives(self, width):
+        """Returns first and second derivative of y with respect to x
+        The derivatives are smoothed with a rolling average of width 'width'
+        """
         self.dy = pd.Series(np.gradient(self.y, self.dt)).rolling(
             window=width, center=True).mean()
         self.ddy = pd.Series(np.gradient(self.dy, self.dt)).rolling(
@@ -157,6 +162,7 @@ class ChromData:
 
 
     def smooth(self, width):
+        "Smooth y data with a rolling average of width 'width'"
         self.y = pd.Series(self.y).rolling(window=width, center=True).mean()
         self.peaks = []
         self.peak_table = []
@@ -176,6 +182,8 @@ class ChromData:
 
 
     def get_peak_table(self):
+        if len(self.peak_table) == 0:
+            self.build_peak_table()
         return self.peak_table
 
 
@@ -183,3 +191,11 @@ class ChromData:
 if __name__ == "__main__":
     c = ChromData("./data/SST.txt")
     x, y = c
+
+    # testing scipy.signal.find_peaks
+    indices = find_peaks(y, prominence=(0.1, None))[0]
+    y_max = np.take(y, indices, 0)
+    x_max = np.take(x, indices, 0)
+    import matplotlib.pyplot as plt
+    plt.plot(x, y, '-', x_max, y_max, 'x')
+    plt.show()
