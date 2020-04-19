@@ -3,7 +3,7 @@
 All times in seconds.
 """
 
-from cutil import ChromData, Point, Peak, gaussian, fit_peak
+from cutil import *
 from collections import namedtuple
 from scipy.signal import find_peaks as sfind_peaks
 import numpy as np
@@ -19,8 +19,17 @@ class Integrator:
     """The typical interface of an integrator"""
     def __init__(self):
         self.cdata = []
+        
         self.parameters = {}
-        self.bl_parameters = {}
+        self.events = []  # events are time dependent parameters
+        
+        self.bl_parameters = {}  # baseline parameters
+        self.bl_events = []      # time dependent parameters for baseline
+        
+        # test
+        self.bl_events.append(Event("threshold", 0, 0.01))
+        self.bl_events.append(Event("width", 0, 500))
+        self.bl_events.append(Event("threshold", 1200, 1))
 
 
     def __getitem__(self, index):
@@ -47,24 +56,101 @@ class Integrator:
 
 
     def find_peaks(self, index):
+        "Integrator-specific algorithm"
         pass
 
 
     def find_baseline(self, index):
-        pass
+        width = 500
+
+        x, y = self.cdata[index]
+        x_min = [x[0]]
+        y_min = [y[0]]
+        i_min = 0
+        i = 1
+        while i < len(y):
+            if y[i] < y[i_min]:
+                i_min = i
+            if i % width == 0:
+                x_min.append(x[i_min])
+                y_min.append(y[i_min])
+                i_min = i
+            i += 1
+
+        # clean baseline -> i.e. search for "peaks"
+        i = 0
+        #pdb.set_trace()
+
+        while i < len(y_min) - 1:
+            j = i + 1
+
+            for event in self.bl_events:
+                if event.time <= x_min[i]:
+                    # assume strictly ordered events
+                    self.bl_parameters[event.name] = event.value
+                else:
+                    break
+
+            while j < len(y_min):
+                slope = (y_min[j] - y_min[i]) / (x_min[j] - x_min[i])
+                if abs(slope) > self.bl_parameters["threshold"]:
+                    j += 1
+                    continue
+
+                # slope is less than threshold
+                if j - i > 1:
+                    k = i + 1
+                    while k < j:  # fill in interpolated values
+                        y_min[k] = y_min[i] + slope * (x_min[k] - x_min[i])
+                        k += 1
+                i = j
+                break
+            else:
+                # end of j loop is reached without fulfilling the above criteria
+                break
+
+        return x_min, y_min
         
-    
+        
     def subtract_baseline(self, index):
-        pass
-    
-    
-    def fit_peaks(self, index):
-        pass
-    
-    
-    def build_chromatogram_from_fits(self, index):
-        pass
+        x, y = self.cdata[index]
+        xb, yb = self.find_baseline(index)
+        ybc = np.full_like(y, 0)
         
+        i = 0
+        while i < len(ybc):
+            # TODO: implement baseline correction
+            pass
+        
+        return x, ybc
+        
+        
+    def fit_peaks(self, index):
+         "fit peaks with gaussian"
+         xbc, ybc = subtract_baseline(index)
+         for peak in self.cdata[index].peaks:
+             height = peak.apex.y - (peak.start.y + peak.end.y)/2
+             width = peak.end.x - peak.start.x
+             try:
+                # TODO: adapt to new situation -> where are the fits stored?
+                 self.peak_fits.append(
+                     fit_peak(xbc, ybc, peak.start.x - width*0.1,
+                         peak.end.x + width*0.1, gaussian,
+                         [height, peak.apex.x, width]))
+             except RuntimeError:
+                 print("Could not fit peak at:", peak.apex.x, file=sys.stderr)
+                 self.peak_fits.append(None)
+
+
+    def build_chromatogram_from_fits(self, index):
+        x, y = self.cdata[index]
+        y_fit = np.full_like(y, 0)
+        for fit_params in self.peak_fits:
+            if fit_params == None:
+                break
+            y_fit += np.array([gaussian(xi, *fit_params) for xi in x])
+        return y_fit
+    
 
 
 #-----------------------------------------------------------------------------
@@ -253,99 +339,6 @@ class MBIntegrator(Integrator):
         self.cdata[index].build_peak_table()
         return self.cdata[index].peaks
 
-
-    def find_baseline(self, index):
-        # should implement timed events
-        width = 500
-
-        x, y = self.cdata[index]
-        x_min = [x[0]]
-        y_min = [y[0]]
-        i_min = 0
-        i = 1
-        while i < len(y):
-            if y[i] < y[i_min]:
-                i_min = i
-            if i % width == 0:
-                x_min.append(x[i_min])
-                y_min.append(y[i_min])
-                i_min = i
-            i += 1
-
-        # clean baseline -> i.e. search for "peaks"
-        i = 0
-        #pdb.set_trace()
-
-        while i < len(y_min) - 1:
-            j = i + 1
-
-            for event in self.bl_events:
-                if event.time <= x_min[i]:
-                    # assume strictly ordered events
-                    self.bl_parameters[event.name] = event.value
-                else:
-                    break
-
-            while j < len(y_min):
-                slope = (y_min[j] - y_min[i]) / (x_min[j] - x_min[i])
-                if abs(slope) > self.bl_parameters["threshold"]:
-                    j += 1
-                    continue
-
-                # slope is less than threshold
-                if j - i > 1:
-                    k = i + 1
-                    while k < j:  # fill in interpolated values
-                        y_min[k] = y_min[i] + slope * (x_min[k] - x_min[i])
-                        k += 1
-                i = j
-                break
-            else:
-                # end of j loop is reached without fulfilling the above criteria
-                break
-
-        return x_min, y_min
-        
-        
-    def subtract_baseline(self, index):
-        x, y = self.cdata[index]
-        xb, yb = self.find_baseline(index)
-        ybc = np.full_like(y, 0)
-        
-        i = 0
-        while i < len(ybc):
-            # TODO: implement baseline correction
-            pass
-        
-        return x, ybc
-        
-        
-    def fit_peaks(self, index):
-         "fit peaks with gaussian"
-         xbc, ybc = subtract_baseline(index)
-         for peak in self.cdata[index].peaks:
-             height = peak.apex.y - (peak.start.y + peak.end.y)/2
-             width = peak.end.x - peak.start.x
-             try:
-                # TODO: adapt to new situation -> where are the fits stored?
-                 self.peak_fits.append(
-                     fit_peak(xbc, ybc, peak.start.x - width*0.1,
-                         peak.end.x + width*0.1, gaussian,
-                         [height, peak.apex.x, width]))
-             except RuntimeError:
-                 print("Could not fit peak at:", peak.apex.x, file=sys.stderr)
-                 self.peak_fits.append(None)
-
-
-    def build_chromatogram_from_fits(self, index):
-        x, y = self.cdata[index]
-        y_fit = np.full_like(y, 0)
-        for fit_params in self.peak_fits:
-            if fit_params == None:
-                break
-            y_fit += np.array([gaussian(xi, *fit_params) for xi in x])
-        return y_fit
-    
 
 
 class ScIntegrator(Integrator):

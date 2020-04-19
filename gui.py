@@ -4,7 +4,7 @@
 import os
 
 from cutil import ChromData
-from integrator import CSIntegrator, MBIntegrator, ScIntegrator
+from integrator import *
 
 import tkinter as tk
 from tkinter import ttk
@@ -54,7 +54,7 @@ class RibbonFrame(ttk.Frame):
 
 
 #-----------------------------------------------------------------------------
-class DataChoose(ttk.Frame):
+class DataChooser(ttk.Frame):
     "SidePane contains a listbox populated with data files"
     def __init__(self, master=None, datafiles=None):
         ttk.Frame.__init__(self, master)
@@ -229,7 +229,7 @@ class TestGUI(ttk.Frame):
         self.ribbon.pack(side=tk.TOP)
 
         self.frame2 = ttk.Frame(self)
-        self.data_choose = DataChoose(self.frame2, datafiles=self.datafiles)
+        self.data_choose = DataChooser(self.frame2, datafiles=self.datafiles)
         self.data_choose.pack(fill=tk.BOTH, expand=1)
 
         self.frame3 = ttk.Frame(self)
